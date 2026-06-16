@@ -1,0 +1,152 @@
+// ── WMS Webhook ─────────────────────────────────────────────
+
+export interface WMSProduct {
+  codigoProduto: string;
+  quantidade: number;
+  lote: string;
+}
+
+export interface WMSMetadata {
+  codigoInterno: string;
+  codigoExterno: string;
+  quantidadeItens: number;
+  produtos: WMSProduct[];
+}
+
+export type WMSTipoEvento =
+  | 'GERADO'
+  | 'PEDIDO_EM_ATENDIMENTO'
+  | 'FINALIZADO'
+  | 'CANCELADO'
+  | 'ESTORNADO';
+
+export type WMSClassificacao = 'EXPEDICAO' | 'RECEBIMENTO';
+
+export interface WMSWebhookPayload {
+  id: string;
+  docEmpresa: string;
+  docDepositante: string;
+  tipoEvento: WMSTipoEvento;
+  dataEvento: string;
+  ambiente: 'PRODUCAO' | 'SANDBOX';
+  classificacao: WMSClassificacao;
+  login: string;
+  metadata: WMSMetadata;
+}
+
+// ── Bling Webhook ────────────────────────────────────────────
+
+export interface BlingPedidoItem {
+  id: number;
+  produto: {
+    id: number;
+    nome: string;
+    codigo: string;
+  };
+  quantidade: number;
+}
+
+export interface BlingPedidoData {
+  id: number;
+  numero?: number;
+  situacao?: {
+    id: number;
+    nome?: string;
+  };
+  itens?: BlingPedidoItem[];
+  [key: string]: unknown;
+}
+
+export interface BlingWebhookPayload {
+  data: BlingPedidoData;
+  event?: string;
+  retorno?: string;
+}
+
+// ── Database Row Types ───────────────────────────────────────
+
+export type WebhookEventStatus =
+  | 'pending'
+  | 'processing'
+  | 'done'
+  | 'failed'
+  | 'dlq'
+  | 'quarantine';
+
+export type WebhookSource = 'wms' | 'bling';
+
+export interface WebhookEvent {
+  id: string;
+  source: WebhookSource;
+  event_type: string;
+  idempotency_key: string;
+  payload: unknown;
+  status: WebhookEventStatus;
+  retry_count: number;
+  error: string | null;
+  created_at: string;
+  processed_at: string | null;
+}
+
+export interface ProductMapping {
+  id: string;
+  wms_code: string;
+  bling_sku: string;
+  bling_product_id: number;
+  active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BlingToken {
+  singleton_key: string;
+  access_token: string;
+  refresh_token: string;
+  expires_at: string;
+  scope: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface StockSnapshot {
+  id: string;
+  source: 'wms' | 'bling';
+  product_code: string;
+  quantity: number;
+  snapshot_at: string;
+}
+
+// ── Bling API Payloads ───────────────────────────────────────
+
+export interface BlingStockMovement {
+  operacao: 'E' | 'S';
+  preco: number;
+  custo: number;
+  data: string;
+  produto: { id: number };
+  deposito: { id: number };
+  quantidade: number;
+  observacoes?: string;
+}
+
+// ── WMS API Payloads ─────────────────────────────────────────
+
+export interface WMSExpeditionProduct {
+  codigoProduto: string;
+  quantidade: number;
+  lote?: string;
+}
+
+export interface WMSCreateExpeditionPayload {
+  codigoExterno: string;
+  docDepositante: string;
+  produtos: WMSExpeditionProduct[];
+}
+
+export interface WMSStockItem {
+  codigoProduto: string;
+  descricao: string;
+  saldoDisponivel: number;
+  saldoReservado: number;
+  saldoFisico: number;
+}

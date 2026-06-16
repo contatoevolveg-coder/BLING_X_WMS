@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find \"C:/Users/Micro/Desktop\" -maxdepth 4 -type f 2>/dev/null | head -80)",
+      "Bash(mkdir -p \"C:/Users/Micro/.claude/projects/C--Users-Micro-Desktop-BLING-X-WMS/memory\")",
+      "Bash(git init *)",
+      "Bash(git add *)",
+      "Bash(git commit *)"
+    ]
+  }
+}

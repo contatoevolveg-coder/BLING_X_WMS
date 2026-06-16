@@ -1,0 +1,17 @@
+{
+  "crons": [
+    {
+      "path": "/api/crons/process-queue",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/crons/reconcile",
+      "schedule": "*/30 * * * *"
+    }
+  ],
+  "functions": {
+    "api/**/*.ts": {
+      "maxDuration": 10
+    }
+  }
+}
