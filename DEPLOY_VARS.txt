@@ -1,0 +1,44 @@
+# ============================================================
+# VARIÁVEIS DE AMBIENTE — SyncStock
+# Copie estes valores para Vercel Dashboard → Settings → Environment Variables
+# OU use o bloco de comandos em DEPLOY_COMMANDS.txt
+#
+# Tokens gerados automaticamente (não altere):
+# ============================================================
+
+WMS_WEBHOOK_TOKEN=a58f4ca2edb6ea5fa37b98c18843a8ff6c54366b156f7243299d32408d2f4a95
+BLING_WEBHOOK_TOKEN=9fcba7e60058b58f5a2db9b4e61b1e02f32692ef708bdbc5adea7553fb11ceea
+CRON_SECRET=ce419bfc77f6d6ce41ee70d2d6e36f8c453abf28de9ae198
+
+# ============================================================
+# Preencha estes valores com suas credenciais:
+# ============================================================
+
+# Supabase — projeto "Romaneio" (ref: odanqvpyuycqptqemfat)
+# Painel: https://supabase.com/dashboard/project/odanqvpyuycqptqemfat/settings/api
+SUPABASE_URL=https://odanqvpyuycqptqemfat.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=<cole aqui o service_role key do projeto Romaneio>
+
+# Bling — App ID 338063
+# Painel: https://www.bling.com.br/cadastro.aplicativos.php#/form/338063 → "Informações do app"
+BLING_CLIENT_ID=<cole aqui o Client ID>
+BLING_CLIENT_SECRET=<cole aqui o Client Secret>
+BLING_REDIRECT_URI=https://syncstock.vercel.app/api/auth/callback
+
+# Bling deposit ID — buscar APÓS o OAuth com: GET https://www.bling.com.br/Api/v3/depositos
+BLING_DEPOSITO_ID=<cole aqui o ID do depósito principal>
+
+# Smartgo WMS
+WMS_API_KEY=<cole aqui a api_key da Smartgo>
+WMS_BASE_URL=https://apigateway.smartgo.com.br
+WMS_DOC_DEPOSITANTE=<CNPJ do depositante sem formatação, ex: 12345678000199>
+
+# ============================================================
+# URL dos Webhooks (para registrar nos painéis)
+# ============================================================
+
+# Registrar na Smartgo (abrir chamado):
+WMS_WEBHOOK_URL=https://syncstock.vercel.app/api/webhooks/wms/a58f4ca2edb6ea5fa37b98c18843a8ff6c54366b156f7243299d32408d2f4a95
+
+# Registrar na Bling (painel do app → Webhooks):
+BLING_WEBHOOK_URL=https://syncstock.vercel.app/api/webhooks/bling?token=9fcba7e60058b58f5a2db9b4e61b1e02f32692ef708bdbc5adea7553fb11ceea

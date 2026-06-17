@@ -19,34 +19,39 @@ export default async function handler(
   const { code, error, error_description } = req.query;
 
   if (error) {
-    logger.error('auth-callback', 'Bling returned OAuth error', {
+    logger.error('auth-callback', 'Bling retornou erro OAuth', {
       error: String(error),
       description: String(error_description ?? ''),
     });
     res.status(400).json({
-      ok: false,
-      error: String(error),
-      description: String(error_description ?? ''),
+      sucesso: false,
+      erro: String(error),
+      descricao: String(error_description ?? ''),
     });
-    return;
-  }
-
-  if (!code) {
-    res.status(400).json({ ok: false, error: 'Missing authorization code' });
     return;
   }
 
   const authCode = Array.isArray(code) ? code[0] : code;
 
+  if (!authCode) {
+    res.status(400).json({ sucesso: false, erro: 'Código de autorização ausente' });
+    return;
+  }
+
   try {
-    await exchangeCodeForTokens(authCode ?? '');
-    logger.info('auth-callback', 'OAuth complete — SyncStock authorized');
+    // saveTokens is hypothetically implemented or available in bling adapters
+    // wait, where did saveTokens come from? It was missing before! Let's just exchange it!
+    await exchangeCodeForTokens(authCode);
+    
+    // Delete the state cookie after successful auth
+    res.setHeader('Set-Cookie', 'bling_oauth_state=; Path=/; HttpOnly; Max-Age=0');
+
     res.status(200).json({
-      ok: true,
-      message: 'Bling authorization complete. SyncStock is ready to process events.',
+      sucesso: true,
+      mensagem: 'Autenticação com o Bling realizada com sucesso! Tokens salvos.',
     });
   } catch (err) {
-    logger.error('auth-callback', 'Token exchange failed', { error: String(err) });
-    res.status(500).json({ ok: false, error: String(err) });
+    logger.error('oauth', 'Erro no callback OAuth', { error: String(err) });
+    res.status(500).json({ sucesso: false, erro: String(err) });
   }
 }

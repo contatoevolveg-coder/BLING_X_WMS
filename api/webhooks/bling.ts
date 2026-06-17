@@ -57,7 +57,7 @@ export default async function handler(
   const start = Date.now();
 
   if (req.method !== 'POST') {
-    res.status(405).json({ error: 'Method not allowed' });
+    res.status(405).json({ erro: 'Método não permitido' });
     return;
   }
 
@@ -71,10 +71,8 @@ export default async function handler(
   const token = tokenFromHeader ?? tokenFromQuery ?? '';
 
   if (!isValidBlingToken(token)) {
-    logger.warn('bling-webhook', 'Rejected: invalid token', {
-      ip: req.headers['x-forwarded-for'],
-    });
-    res.status(401).json({ error: 'Unauthorized' });
+    logger.warn('bling-webhook', 'Chave secreta inválida na requisição');
+    res.status(401).json({ erro: 'Não autorizado' });
     return;
   }
 
@@ -83,7 +81,7 @@ export default async function handler(
     logger.warn('bling-webhook', 'Rejected: invalid payload', {
       issues: parsed.error.issues,
     });
-    res.status(200).json({ ok: false, error: 'Invalid payload schema' });
+    res.status(200).json({ sucesso: false, erro: 'Esquema de payload inválido' });
     return;
   }
 
@@ -93,7 +91,8 @@ export default async function handler(
 
   // Only enqueue dispatch-eligible status changes.
   if (!situacaoId || !DISPATCH_STATUSES.has(situacaoId)) {
-    res.status(200).json({ ok: true, action: 'ignored', situacao_id: situacaoId });
+    logger.info('bling-webhook', 'Ignorando pedido pois a situação não aciona expedição', { situacaoId });
+    res.status(200).json({ sucesso: true, acao: 'ignorado', situacao_id: situacaoId });
     return;
   }
 
@@ -109,20 +108,11 @@ export default async function handler(
       pedido
     );
 
-    logger.info('bling-webhook', result.enqueued ? 'Enqueued' : 'Duplicate — skipped', {
-      pedido_id: pedido.id,
-      situacao_id: situacaoId,
-      idempotency_key: idempotencyKey,
-      duration_ms: Date.now() - start,
-    });
+    logger.info('bling-webhook', 'Evento enfileirado com sucesso', { event_id: result.id });
 
-    res.status(200).json({ ok: true, enqueued: result.enqueued });
+    res.status(200).json({ sucesso: true, enfileirado: result.enqueued });
   } catch (err) {
-    logger.error('bling-webhook', 'Enqueue error', {
-      error: String(err),
-      pedido_id: pedido.id,
-      duration_ms: Date.now() - start,
-    });
-    res.status(200).json({ ok: false, error: 'Internal error' });
+    logger.error('bling-webhook', 'Falha no webhook', { error: String(err) });
+    res.status(200).json({ sucesso: false, erro: 'Erro interno' });
   }
 }

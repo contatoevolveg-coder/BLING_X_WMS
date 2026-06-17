@@ -64,7 +64,7 @@ export default async function handler(
   const start = Date.now();
 
   if (req.method !== 'POST') {
-    res.status(405).json({ error: 'Method not allowed' });
+    res.status(405).json({ erro: 'Método não permitido' });
     return;
   }
 
@@ -74,10 +74,8 @@ export default async function handler(
     : req.query['token'];
 
   if (!token || !isValidToken(token)) {
-    logger.warn('wms-webhook', 'Rejected: invalid token', {
-      ip: req.headers['x-forwarded-for'],
-    });
-    res.status(401).json({ error: 'Unauthorized' });
+    logger.warn('wms-webhook', 'Chave secreta inválida na requisição');
+    res.status(401).json({ erro: 'Não autorizado' });
     return;
   }
 
@@ -87,7 +85,7 @@ export default async function handler(
       issues: parsed.error.issues,
     });
     // Return 200 so WMS does not retry on validation failures.
-    res.status(200).json({ ok: false, error: 'Invalid payload schema' });
+    res.status(200).json({ sucesso: false, erro: 'Esquema de payload inválido' });
     return;
   }
 
@@ -98,7 +96,8 @@ export default async function handler(
     payload.classificacao !== 'EXPEDICAO' ||
     payload.tipoEvento !== 'FINALIZADO'
   ) {
-    res.status(200).json({ ok: true, action: 'ignored', reason: 'not a finalizado expedicao' });
+    logger.info('wms-webhook', 'Evento ignorado (não é EXPEDICAO FINALIZADO)', { evento: payload.tipoEvento });
+    res.status(200).json({ sucesso: true, acao: 'ignorado', motivo: 'não é expedição finalizada' });
     return;
   }
 
@@ -110,21 +109,12 @@ export default async function handler(
       payload
     );
 
-    logger.info('wms-webhook', result.enqueued ? 'Enqueued' : 'Duplicate — skipped', {
-      event_id: payload.id,
-      idempotency_key: payload.metadata.codigoInterno,
-      product_count: payload.metadata.produtos.length,
-      duration_ms: Date.now() - start,
-    });
+    logger.info('wms-webhook', 'Evento enfileirado com sucesso', { event_id: payload.id });
 
-    res.status(200).json({ ok: true, enqueued: result.enqueued });
+    res.status(200).json({ sucesso: true, enfileirado: result.enqueued });
   } catch (err) {
-    logger.error('wms-webhook', 'Enqueue error', {
-      error: String(err),
-      event_id: payload.id,
-      duration_ms: Date.now() - start,
-    });
+    logger.error('wms-webhook', 'Falha no webhook', { error: String(err) });
     // Always 200 to prevent WMS retry storms.
-    res.status(200).json({ ok: false, error: 'Internal error' });
+    res.status(200).json({ sucesso: false, erro: 'Erro interno' });
   }
 }

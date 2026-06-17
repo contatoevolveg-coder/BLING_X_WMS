@@ -13,13 +13,16 @@ interface Divergence {
 }
 
 /**
- * Runs every 30 minutes (see vercel.json).
- * Snapshots stock from both WMS and Bling, then logs any quantity divergences
- * using product_mappings as the join key.
- *
- * Divergences are logged as warnings — no auto-correction is performed.
- * A human must investigate and either trigger a manual reconciliation or
- * update the product_mappings table.
+ * CRON DE RECONCILIAÇÃO (Executa a cada 30 minutos, definido no vercel.json)
+ * 
+ * Comunicação: 
+ * - Busca todos os estoques do WMS via API `getDetailedStockBalance`.
+ * - Busca todos os estoques do Bling via API `listStockBalances`.
+ * - Compara os saldos físicos utilizando a tabela `product_mappings` como ponte (join key).
+ * 
+ * O objetivo é identificar divergências entre as duas plataformas e registrá-las
+ * nos logs do sistema (divergências geram logs de warning).
+ * Nenhuma correção automática é feita; apenas alertas para investigação humana.
  */
 export default async function handler(
   req: VercelRequest,
@@ -28,13 +31,13 @@ export default async function handler(
   const runStart = Date.now();
 
   if (!isAuthorized(req)) {
-    res.status(401).json({ error: 'Unauthorized' });
+    res.status(401).json({ erro: 'Não autorizado' });
     return;
   }
 
   const depositoId = parseInt(process.env['BLING_DEPOSITO_ID'] ?? '', 10);
   if (!depositoId) {
-    res.status(500).json({ error: 'Missing or invalid BLING_DEPOSITO_ID' });
+    res.status(500).json({ erro: 'Variável BLING_DEPOSITO_ID ausente ou inválida' });
     return;
   }
 
@@ -47,7 +50,7 @@ export default async function handler(
     const snapshotAt = new Date().toISOString();
     const db = getSupabase();
 
-    // Persist snapshots as append-only rows for historical analysis.
+    // Salva o snapshot dos estoques para fins de histórico e auditoria
     const wmsRows = wmsItems.map((item) => ({
       source: 'wms' as const,
       product_code: item.codigoProduto,
@@ -62,23 +65,44 @@ export default async function handler(
       snapshot_at: snapshotAt,
     }));
 
+    // Helper para inserir dados em lotes e evitar erro de 'Payload Too Large'
+    const chunkInsert = async (table: string, rows: Record<string, unknown>[], chunkSize = 500) => {
+      for (let i = 0; i < rows.length; i += chunkSize) {
+        const chunk = rows.slice(i, i + chunkSize);
+        const { error } = await db.from(table).insert(chunk);
+        if (error) throw new Error(`Falha ao inserir lote na tabela ${table}: ${error.message}`);
+      }
+    };
+
     if (wmsRows.length > 0) {
-      const { error } = await db.from('stock_snapshots').insert(wmsRows);
-      if (error) throw new Error(`WMS snapshot insert failed: ${error.message}`);
+      await chunkInsert('stock_snapshots', wmsRows);
     }
 
     if (blingRows.length > 0) {
-      const { error } = await db.from('stock_snapshots').insert(blingRows);
-      if (error) throw new Error(`Bling snapshot insert failed: ${error.message}`);
+      await chunkInsert('stock_snapshots', blingRows);
     }
 
-    // Compare via active product_mappings.
-    const { data: mappings, error: mappingError } = await db
-      .from('product_mappings')
-      .select('wms_code, bling_sku')
-      .eq('active', true);
+    // Compara os itens com base nos mapeamentos de produtos ativos
+    let allMappings: Record<string, unknown>[] = [];
+    let from = 0;
+    const step = 1000;
+    
+    // Paginação para evitar limite padrão de 1000 rows do Supabase
+    while (true) {
+      const { data, error: mappingError } = await db
+        .from('product_mappings')
+        .select('wms_code, bling_sku')
+        .eq('active', true)
+        .range(from, from + step - 1);
 
-    if (mappingError) throw new Error(`Mappings fetch failed: ${mappingError.message}`);
+      if (mappingError) throw new Error(`Falha ao buscar mapeamentos: ${mappingError.message}`);
+      if (!data || data.length === 0) break;
+      
+      allMappings.push(...data);
+      if (data.length < step) break;
+      from += step;
+    }
+    const mappings = allMappings as Array<{ wms_code: string; bling_sku: string }>;
 
     const wmsMap = new Map(wmsItems.map((i) => [i.codigoProduto, i.saldoFisico]));
     const blingMap = new Map(blingItems.map((i) => [i.produto.codigo, i.saldoFisico]));
@@ -102,32 +126,32 @@ export default async function handler(
     }
 
     if (divergences.length > 0) {
-      logger.warn('reconcile', `${divergences.length} divergence(s) detected`, {
+      logger.warn('reconcile', `${divergences.length} divergência(s) detectada(s)`, {
         divergences,
-        duration_ms: Date.now() - runStart,
+        duracao_ms: Date.now() - runStart,
       });
     } else {
-      logger.info('reconcile', 'Stock in sync', {
+      logger.info('reconcile', 'Estoque sincronizado', {
         wms_skus: wmsItems.length,
         bling_skus: blingItems.length,
         mapped_pairs: mappings?.length ?? 0,
-        duration_ms: Date.now() - runStart,
+        duracao_ms: Date.now() - runStart,
       });
     }
 
     res.status(200).json({
-      ok: true,
-      wms_products: wmsItems.length,
-      bling_products: blingItems.length,
-      divergences: divergences.length,
-      duration_ms: Date.now() - runStart,
+      sucesso: true,
+      produtos_wms: wmsItems.length,
+      produtos_bling: blingItems.length,
+      divergencias: divergences.length,
+      duracao_ms: Date.now() - runStart,
     });
   } catch (err) {
-    logger.error('reconcile', 'Reconciliation error', {
-      error: String(err),
-      duration_ms: Date.now() - runStart,
+    logger.error('reconcile', 'Erro na reconciliação', {
+      erro: String(err),
+      duracao_ms: Date.now() - runStart,
     });
-    res.status(500).json({ ok: false, error: String(err) });
+    res.status(500).json({ sucesso: false, erro: String(err) });
   }
 }
 

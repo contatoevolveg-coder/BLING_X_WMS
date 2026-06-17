@@ -1,0 +1,89 @@
+# ============================================================
+# DEPLOY COMPLETO — Execute em ordem no terminal PowerShell
+# Diretório: C:\Users\Micro\Desktop\BLING X WMS
+# ============================================================
+
+
+# ── PASSO 1: Login na Vercel ─────────────────────────────────
+# Abre o navegador para autenticar com sua conta Vercel
+npx vercel login
+
+
+# ── PASSO 2: Deploy inicial (sem env vars) ───────────────────
+# Cria o projeto "syncstock" na Vercel e publica o código
+npx vercel --prod --yes
+
+
+# ── PASSO 3: Adicionar variáveis de ambiente ─────────────────
+# Substitua <VALOR> pelos valores do arquivo DEPLOY_VARS.txt
+# Execute cada linha separadamente (o CLI vai confirmar cada uma)
+
+npx vercel env add SUPABASE_URL production
+# (cole o valor quando solicitado: https://odanqvpyuycqptqemfat.supabase.co)
+
+npx vercel env add SUPABASE_SERVICE_ROLE_KEY production
+# (cole o service_role key do Supabase)
+
+npx vercel env add BLING_CLIENT_ID production
+npx vercel env add BLING_CLIENT_SECRET production
+
+npx vercel env add BLING_REDIRECT_URI production
+# (valor fixo: https://syncstock.vercel.app/api/auth/callback)
+
+npx vercel env add BLING_DEPOSITO_ID production
+# (buscar depois do OAuth — pode deixar "0" por enquanto)
+
+npx vercel env add BLING_WEBHOOK_TOKEN production
+# (valor: 9fcba7e60058b58f5a2db9b4e61b1e02f32692ef708bdbc5adea7553fb11ceea)
+
+npx vercel env add WMS_API_KEY production
+npx vercel env add WMS_BASE_URL production
+# (valor fixo: https://apigateway.smartgo.com.br)
+
+npx vercel env add WMS_DOC_DEPOSITANTE production
+# (CNPJ do depositante sem formatação)
+
+npx vercel env add WMS_WEBHOOK_TOKEN production
+# (valor: a58f4ca2edb6ea5fa37b98c18843a8ff6c54366b156f7243299d32408d2f4a95)
+
+npx vercel env add CRON_SECRET production
+# (valor: ce419bfc77f6d6ce41ee70d2d6e36f8c453abf28de9ae198)
+
+
+# ── PASSO 4: Redeploy com as variáveis ──────────────────────
+npx vercel --prod --yes
+
+
+# ── PASSO 5: Aplicar migration no Supabase ───────────────────
+# Vincula o projeto Supabase (pede a senha do banco de dados)
+npx supabase link --project-ref odanqvpyuycqptqemfat
+
+# Aplica a migration (cria tabelas + RPC claim_pending_events)
+npx supabase db push
+
+
+# ── PASSO 6: Autorizar Bling OAuth ──────────────────────────
+# Abra no navegador após o PASSO 4:
+# https://syncstock.vercel.app/api/auth/start
+# Faça login no Bling e autorize o App 338063.
+# Você será redirecionado para /api/auth/callback — a resposta será:
+# { "ok": true, "message": "Bling authorization complete..." }
+
+
+# ── PASSO 7: Buscar BLING_DEPOSITO_ID ───────────────────────
+# Após o OAuth, rode no terminal:
+# curl -H "Authorization: Bearer <ACCESS_TOKEN>" https://www.bling.com.br/Api/v3/depositos
+# Anote o ID do depósito principal e adicione:
+npx vercel env rm BLING_DEPOSITO_ID production
+npx vercel env add BLING_DEPOSITO_ID production
+# (cole o ID correto)
+npx vercel --prod --yes
+
+
+# ── PASSO 8: Registrar webhooks ──────────────────────────────
+# SMARTGO → Abrir chamado informando a URL:
+#   https://syncstock.vercel.app/api/webhooks/wms/a58f4ca2edb6ea5fa37b98c18843a8ff6c54366b156f7243299d32408d2f4a95
+#
+# BLING → Painel do app 338063 → Webhooks → Nova notificação:
+#   URL: https://syncstock.vercel.app/api/webhooks/bling?token=9fcba7e60058b58f5a2db9b4e61b1e02f32692ef708bdbc5adea7553fb11ceea
+#   Eventos: Pedidos de Vendas → Atualização

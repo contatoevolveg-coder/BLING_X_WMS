@@ -30,6 +30,46 @@ function emit(
   } else {
     console.log(out);
   }
+
+  // Dispara alerta (ex: Discord/Slack) se o nível for warn ou error e o Webhook existir
+  if (level === 'warn' || level === 'error') {
+    void sendAlertWebhook(entry);
+  }
+}
+
+async function sendAlertWebhook(entry: LogEntry): Promise<void> {
+  const webhookUrl = process.env['ALERT_WEBHOOK_URL'];
+  if (!webhookUrl) return;
+
+  const color = entry.level === 'error' ? 16711680 : 16776960; // Red for error, Yellow for warn
+  const payload = {
+    content: `🚨 **SyncStock Alert [${entry.level.toUpperCase()}]**`,
+    embeds: [
+      {
+        title: entry.message,
+        description: `**Source**: ${entry.source}\n**Time**: ${entry.timestamp}`,
+        color: color,
+        fields: Object.entries(entry)
+          .filter(([k]) => !['level', 'source', 'message', 'timestamp'].includes(k))
+          .map(([k, v]) => ({ name: k, value: String(v), inline: true })),
+      },
+    ],
+  };
+
+  try {
+    await fetch(webhookUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+  } catch (err) {
+    console.error(JSON.stringify({
+      level: 'error',
+      source: 'logger',
+      message: 'Failed to dispatch alert webhook',
+      error: String(err)
+    }));
+  }
 }
 
 export const logger = {

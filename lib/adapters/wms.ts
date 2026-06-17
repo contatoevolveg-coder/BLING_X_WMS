@@ -1,17 +1,21 @@
 import { logger } from '../logger';
+import { fetchWithRetry } from '../fetchWithRetry';
+import { getSetting } from '../settings';
 import type {
   WMSCreateExpeditionPayload,
   WMSStockItem,
 } from '../types';
 
-function getBaseUrl(): string {
-  return process.env['WMS_BASE_URL'] ?? 'https://apigateway.smartgo.com.br';
+async function getBaseUrl(): Promise<string> {
+  try {
+    return await getSetting('WMS_BASE_URL');
+  } catch {
+    return 'https://apigateway.smartgo.com.br';
+  }
 }
 
-function getApiKey(): string {
-  const key = process.env['WMS_API_KEY'];
-  if (!key) throw new Error('Missing WMS_API_KEY');
-  return key;
+async function getApiKey(): Promise<string> {
+  return await getSetting('WMS_API_KEY');
 }
 
 async function wmsRequest<T>(
@@ -19,12 +23,14 @@ async function wmsRequest<T>(
   path: string,
   body?: unknown
 ): Promise<T> {
-  const url = `${getBaseUrl()}${path}`;
+  const baseUrl = await getBaseUrl();
+  const url = `${baseUrl}${path}`;
+  const apiKey = await getApiKey();
 
-  const res = await fetch(url, {
+  const res = await fetchWithRetry(url, {
     method,
     headers: {
-      api_key: getApiKey(),
+      api_key: apiKey,
       'Content-Type': 'application/json',
       Accept: 'application/json',
     },
@@ -39,11 +45,15 @@ async function wmsRequest<T>(
   return res.json() as Promise<T>;
 }
 
-// ── Public API ───────────────────────────────────────────────
+// ── API Pública do Adaptador ───────────────────────────────────────────────
 
 /**
- * Creates an expedition order in the WMS from a list of products.
- * Endpoint: POST /v2/expedicao/por-produtos
+ * Cria uma nova ordem de expedição no WMS a partir de uma lista de produtos.
+ * Comunicação: POST /v2/expedicao/por-produtos (API WMS).
+ * Acionado sempre que um pedido elegível é criado/atualizado no Bling.
+ * 
+ * @param payload Dados da expedição (código externo, depositante e lista de produtos)
+ * @returns O código interno gerado pelo WMS para a expedição criada
  */
 export async function createExpeditionByProducts(
   payload: WMSCreateExpeditionPayload
@@ -66,8 +76,7 @@ export async function createExpeditionByProducts(
  * Endpoint: GET /estoque/v2/saldo-detalhado
  */
 export async function getDetailedStockBalance(): Promise<WMSStockItem[]> {
-  const depositante = process.env['WMS_DOC_DEPOSITANTE'];
-  if (!depositante) throw new Error('Missing WMS_DOC_DEPOSITANTE');
+  const depositante = await getSetting('WMS_DOC_DEPOSITANTE');
 
   const result = await wmsRequest<{ itens?: WMSStockItem[] }>(
     'GET',
@@ -86,4 +95,27 @@ export async function getExpedition(codigoInterno: string): Promise<unknown> {
     'GET',
     `/v2/expedicao?codigoInterno=${encodeURIComponent(codigoInterno)}`
   );
+}
+
+/**
+ * Pings the WMS API to verify connection settings.
+ * Fetches 1 item from the stock balance to ensure credentials are correct.
+ */
+export async function pingWmsConnection(
+  apiKey: string,
+  baseUrl: string,
+  depositante: string
+): Promise<boolean> {
+  const url = `${baseUrl}/estoque/v2/saldo-detalhado?docDepositante=${encodeURIComponent(depositante)}&limite=1`;
+  
+  const res = await fetchWithRetry(url, {
+    method: 'GET',
+    headers: {
+      api_key: apiKey,
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    },
+  });
+
+  return res.ok;
 }

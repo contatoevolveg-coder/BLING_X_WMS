@@ -1,5 +1,6 @@
 import { getSupabase } from '../supabase';
 import { logger } from '../logger';
+import { fetchWithRetry } from '../fetchWithRetry';
 import type { BlingStockMovement, BlingToken } from '../types';
 
 const BLING_BASE_URL = 'https://www.bling.com.br/Api/v3';
@@ -93,7 +94,7 @@ async function blingRequest<T>(
   const accessToken = await getValidAccessToken();
   const url = `${BLING_BASE_URL}${path}`;
 
-  const res = await fetch(url, {
+  const res = await fetchWithRetry(url, {
     method,
     headers: {
       Authorization: `Bearer ${accessToken}`,
@@ -138,14 +139,34 @@ export async function listStockBalances(depositoId: number): Promise<
     saldoVirtual?: number;
   }>
 > {
-  const res = await blingRequest<{
-    data: Array<{
-      produto: { id: number; codigo: string; nome?: string };
-      saldoFisico: number;
-      saldoVirtual?: number;
-    }>;
-  }>('GET', `/estoques?idDeposito=${depositoId}&pagina=1&limite=500`);
-  return res.data ?? [];
+  const allItems: Array<{
+    produto: { id: number; codigo: string; nome?: string };
+    saldoFisico: number;
+    saldoVirtual?: number;
+  }> = [];
+
+  let page = 1;
+  const limite = 100;
+
+  while (true) {
+    const res = await blingRequest<{
+      data?: Array<{
+        produto: { id: number; codigo: string; nome?: string };
+        saldoFisico: number;
+        saldoVirtual?: number;
+      }>;
+    }>('GET', `/estoques?idDeposito=${depositoId}&pagina=${page}&limite=${limite}`);
+    
+    const items = res.data ?? [];
+    allItems.push(...items);
+
+    if (items.length < limite) {
+      break;
+    }
+    page++;
+  }
+
+  return allItems;
 }
 
 /**

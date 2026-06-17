@@ -5,12 +5,17 @@ import { logger } from '../../lib/logger';
 import type { WebhookEvent } from '../../lib/types';
 
 /**
- * Runs every minute (see vercel.json).
- * Claims up to 10 pending events and routes each to the correct handler.
- *
- * Vercel automatically injects `Authorization: Bearer ${CRON_SECRET}`
- * when invoking this endpoint on a schedule. The check below blocks
- * any external caller that does not know the secret.
+ * CRON DE PROCESSAMENTO DA FILA (Executa a cada minuto, conforme vercel.json).
+ * 
+ * Arquitetura de Fila:
+ * - Em vez de processar os webhooks no momento em que chegam (o que poderia causar timeouts e perdas),
+ *   eles são salvos no Supabase com status 'pending'.
+ * - Esta função atua como um "Worker" assíncrono. Ela puxa lotes (batches) de 10 eventos pendentes
+ *   e processa cada um roteando para o tratador correto (Bling ou WMS).
+ * - A paralelização via `Promise.allSettled` permite alta vazão sem bloquear a thread.
+ * 
+ * Segurança: O Vercel injeta automaticamente `Authorization: Bearer ${CRON_SECRET}` 
+ * ao invocar esse endpoint. Bloqueia qualquer tentativa externa sem a chave secreta.
  */
 export default async function handler(
   req: VercelRequest,
@@ -19,54 +24,56 @@ export default async function handler(
   const runStart = Date.now();
 
   if (!isAuthorized(req)) {
-    res.status(401).json({ error: 'Unauthorized' });
+    res.status(401).json({ erro: 'Não autorizado' });
     return;
   }
 
-  let processed = 0;
-  let failed = 0;
+  let processados = 0;
+  let falhas = 0;
 
   try {
     const events = await claimBatch(10);
 
     logger.info('process-queue', `Claimed ${events.length} event(s)`);
 
-    for (const event of events) {
-      const eventStart = Date.now();
-      try {
-        await route(event);
-        await markDone(event.id);
-        processed++;
-        logger.info('process-queue', 'Event done', {
-          event_id: event.id,
-          source: event.source,
-          event_type: event.event_type,
-          duration_ms: Date.now() - eventStart,
-        });
-      } catch (err) {
-        failed++;
-        await markFailed(event.id, event.retry_count, String(err));
-        logger.error('process-queue', 'Event failed', {
-          event_id: event.id,
-          source: event.source,
-          error: String(err),
-          duration_ms: Date.now() - eventStart,
-        });
-      }
-    }
+    await Promise.allSettled(
+      events.map(async (event) => {
+        const eventStart = Date.now();
+        try {
+          await route(event);
+          await markDone(event.id);
+          processados++;
+          logger.info('process-queue', 'Evento processado com sucesso', {
+            event_id: event.id,
+            source: event.source,
+            event_type: event.event_type,
+            duracao_ms: Date.now() - eventStart,
+          });
+        } catch (err) {
+          falhas++;
+          await markFailed(event.id, event.retry_count, String(err));
+          logger.error('process-queue', 'Falha no processamento de evento', {
+            event_id: event.id,
+            source: event.source,
+            erro: String(err),
+            duracao_ms: Date.now() - eventStart,
+          });
+        }
+      })
+    );
 
     res.status(200).json({
-      ok: true,
-      processed,
-      failed,
-      duration_ms: Date.now() - runStart,
+      sucesso: true,
+      processados,
+      falhas,
+      duracao_ms: Date.now() - runStart,
     });
   } catch (err) {
-    logger.error('process-queue', 'Cron run failed', {
-      error: String(err),
-      duration_ms: Date.now() - runStart,
+    logger.error('process-queue', 'Falha ao rodar cron', {
+      erro: String(err),
+      duracao_ms: Date.now() - runStart,
     });
-    res.status(500).json({ ok: false, error: String(err) });
+    res.status(500).json({ sucesso: false, erro: String(err) });
   }
 }
 
