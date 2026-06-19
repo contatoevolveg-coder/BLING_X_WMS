@@ -1,4 +1,7 @@
 {
+  "redirects": [
+    { "source": "/", "destination": "/api/status", "permanent": false }
+  ],
   "crons": [
     {
       "path": "/api/crons/process-queue",
