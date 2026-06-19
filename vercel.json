@@ -7,6 +7,10 @@
     {
       "path": "/api/crons/reconcile",
       "schedule": "0 1 * * *"
+    },
+    {
+      "path": "/api/crons/refresh-token",
+      "schedule": "0 2 * * *"
     }
   ],
   "functions": {

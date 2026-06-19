@@ -6,7 +6,7 @@ import type { BlingStockMovement, BlingToken } from '../types';
 const BLING_BASE_URL = 'https://www.bling.com.br/Api/v3';
 const BLING_TOKEN_URL = 'https://www.bling.com.br/Api/v3/oauth/token';
 const BLING_AUTH_URL = 'https://www.bling.com.br/Api/v3/oauth/authorize';
-const TOKEN_REFRESH_BUFFER_MS = 60_000;
+const TOKEN_REFRESH_BUFFER_MS = 2 * 60 * 60 * 1_000; // 2h — refresh proactively before expiry
 
 function basicCredentials(): string {
   const id = process.env['BLING_CLIENT_ID'];
