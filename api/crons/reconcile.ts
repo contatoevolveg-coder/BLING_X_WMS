@@ -3,6 +3,7 @@ import { getDetailedStockBalance } from '../../lib/adapters/wms';
 import { listStockBalances } from '../../lib/adapters/bling';
 import { getSupabase } from '../../lib/supabase';
 import { logger } from '../../lib/logger';
+import { sendAlert } from '../../lib/alerts';
 
 interface Divergence {
   wms_code: string;
@@ -130,6 +131,16 @@ export default async function handler(
         divergences,
         duracao_ms: Date.now() - runStart,
       });
+      const topDivs = divergences
+        .sort((a, b) => b.delta - a.delta)
+        .slice(0, 10)
+        .map(d => `• \`${d.wms_code}\` — WMS: **${d.wms_qty}** / Bling: **${d.bling_qty}** (Δ ${d.delta})`)
+        .join('\n');
+      await sendAlert(
+        `📊 ${divergences.length} divergência(s) de estoque`,
+        `${topDivs}${divergences.length > 10 ? `\n...e mais ${divergences.length - 10} produto(s)` : ''}`,
+        'warn'
+      );
     } else {
       logger.info('reconcile', 'Estoque sincronizado', {
         wms_skus: wmsItems.length,

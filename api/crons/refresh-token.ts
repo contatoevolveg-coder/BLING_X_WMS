@@ -1,6 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { getSupabase } from '../../lib/supabase';
 import { logger } from '../../lib/logger';
+import { sendAlert } from '../../lib/alerts';
 
 const BLING_TOKEN_URL = 'https://www.bling.com.br/Api/v3/oauth/token';
 
@@ -33,6 +34,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
 
   if (error || !token) {
     logger.error('refresh-token', 'Token não encontrado no banco');
+    await sendAlert('🔑 Token Bling não encontrado', 'Nenhum token OAuth encontrado no banco. Acesse /api/auth/start para reautorizar.', 'error');
     res.status(500).json({ erro: 'Token não encontrado. Faça OAuth em /api/auth/start' });
     return;
   }
@@ -72,6 +74,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
   if (!refreshRes.ok) {
     const text = await refreshRes.text();
     logger.error('refresh-token', 'Falha no refresh', { status: refreshRes.status, body: text });
+    await sendAlert('🔑 Falha ao renovar token Bling', `Status HTTP ${refreshRes.status}\n\n${text.slice(0, 500)}\n\nO token pode estar expirado. Acesse /api/auth/start para reautorizar.`, 'error');
     res.status(500).json({ erro: `Bling recusou o refresh (${refreshRes.status}): ${text}` });
     return;
   }

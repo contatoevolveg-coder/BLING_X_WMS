@@ -1,7 +1,13 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { getSupabase } from '../lib/supabase';
+import { isDashAuthenticated } from '../lib/auth';
 
-export default async function handler(_req: VercelRequest, res: VercelResponse): Promise<void> {
+export default async function handler(req: VercelRequest, res: VercelResponse): Promise<void> {
+  if (!isDashAuthenticated(req)) {
+    res.redirect(302, '/api/admin/login?next=/api/status');
+    return;
+  }
+
   const db = getSupabase();
   const now = new Date();
 
@@ -49,8 +55,11 @@ export default async function handler(_req: VercelRequest, res: VercelResponse):
     ? `<span style="background:#1a1e3a;color:#a78bfa;padding:2px 8px;border-radius:4px;font-size:.7rem;font-weight:600">BLING</span>`
     : `<span style="background:#1e3a5f;color:#60a5fa;padding:2px 8px;border-radius:4px;font-size:.7rem;font-weight:600">WMS</span>`;
 
-  const evRows = (arr: typeof events) => arr.length === 0
-    ? `<tr><td colspan="7" style="text-align:center;color:#475569;padding:24px;font-style:italic">Nenhum evento encontrado</td></tr>`
+  const requeueBtn = (id: string) =>
+    `<button onclick="requeue('${id}')" style="background:#1e3a5f;color:#93c5fd;border:none;border-radius:4px;padding:3px 8px;font-size:.68rem;cursor:pointer;font-weight:600">↩ Reprocessar</button>`;
+
+  const evRows = (arr: typeof events, showAction = false) => arr.length === 0
+    ? `<tr><td colspan="${showAction ? 8 : 7}" style="text-align:center;color:#475569;padding:24px;font-style:italic">Nenhum evento encontrado</td></tr>`
     : arr.map(e => `<tr class="ev-row" data-status="${e.status}" data-source="${e.source}">
         <td>${srcBadge(e.source)}</td>
         <td style="font-family:monospace;font-size:.75rem">${e.event_type}</td>
@@ -58,17 +67,22 @@ export default async function handler(_req: VercelRequest, res: VercelResponse):
         <td style="font-size:.75rem">${e.retry_count}</td>
         <td style="font-size:.75rem;white-space:nowrap">${fmt(e.created_at)}</td>
         <td style="font-size:.75rem;white-space:nowrap">${e.processed_at ? fmt(e.processed_at) : '—'}</td>
-        <td style="font-size:.72rem;color:#ef4444;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${(e.error ?? '').replace(/"/g, '&quot;')}">${e.error ?? '—'}</td>
+        <td style="font-size:.72rem;color:#ef4444;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${(e.error ?? '').replace(/"/g, '&quot;')}">${e.error ?? '—'}</td>
+        ${showAction ? `<td>${['dlq','quarantine','failed'].includes(e.status) ? requeueBtn(e.id) : '—'}</td>` : ''}
       </tr>`).join('');
 
   const mapRows = mappings.length === 0
-    ? `<tr><td colspan="5" style="text-align:center;color:#475569;padding:24px;font-style:italic">Nenhum mapeamento cadastrado</td></tr>`
+    ? `<tr><td colspan="6" style="text-align:center;color:#475569;padding:24px;font-style:italic">Nenhum mapeamento cadastrado. Use o formulário acima para adicionar.</td></tr>`
     : mappings.map((m: Record<string, unknown>) => `<tr>
         <td style="font-family:monospace">${m['wms_code']}</td>
         <td style="font-family:monospace">${m['bling_sku']}</td>
         <td style="font-family:monospace;font-size:.75rem">${m['bling_product_id']}</td>
         <td>${m['active'] ? `<span style="background:#14532d;color:#86efac;padding:2px 8px;border-radius:4px;font-size:.7rem;font-weight:600">Ativo</span>` : `<span style="background:#7f1d1d;color:#fca5a5;padding:2px 8px;border-radius:4px;font-size:.7rem;font-weight:600">Inativo</span>`}</td>
         <td style="font-size:.75rem">${fmt(m['created_at'] as string)}</td>
+        <td style="white-space:nowrap">
+          <button onclick="toggleMapping('${m['id']}',${m['active']})" style="background:#0f172a;border:1px solid #334155;color:#94a3b8;border-radius:4px;padding:3px 8px;font-size:.68rem;cursor:pointer;margin-right:4px">${m['active'] ? 'Desativar' : 'Ativar'}</button>
+          <button onclick="deleteMapping('${m['id']}')" style="background:#7f1d1d;color:#fca5a5;border:none;border-radius:4px;padding:3px 8px;font-size:.68rem;cursor:pointer">🗑</button>
+        </td>
       </tr>`).join('');
 
   const snapRows = snapshots.length === 0
@@ -287,8 +301,8 @@ input.search:focus{border-color:#3b82f6}
       <button class="filter-btn" onclick="filterSrc(this,'wms')">WMS</button>
     </div>
     <table id="ev-table">
-      <thead><tr><th>Origem</th><th>Tipo</th><th>Status</th><th>Tentativas</th><th>Recebido</th><th>Processado</th><th>Erro</th></tr></thead>
-      <tbody>${evRows(events)}</tbody>
+      <thead><tr><th>Origem</th><th>Tipo</th><th>Status</th><th>Tentativas</th><th>Recebido</th><th>Processado</th><th>Erro</th><th>Ação</th></tr></thead>
+      <tbody>${evRows(events, true)}</tbody>
     </table>
     ${events.length === 0 ? '' : `<div style="padding:10px 16px;font-size:.72rem;color:#475569;border-top:1px solid #334155">Mostrando ${events.length} evento(s) · máximo 100</div>`}
   </section>
@@ -322,17 +336,32 @@ input.search:focus{border-color:#3b82f6}
 
 <!-- ════════════════════════════════════════ MAPEAMENTOS ═══ -->
 <div id="tab-mappings" class="tab-content">
-  <div style="background:#1e3a5f;border:1px solid #2563eb;border-radius:8px;padding:14px 18px;margin-bottom:16px;font-size:.8rem;color:#93c5fd">
-    <strong>Como funciona:</strong> Para cada item que o WMS expedir, o sistema precisa saber qual produto do Bling corresponde.
-    Cadastre mapeamentos via <code style="background:#0f172a;padding:2px 6px;border-radius:4px">POST /api/mappings</code> com <code style="background:#0f172a;padding:2px 6px;border-radius:4px">{ wms_code, bling_sku, bling_product_id }</code>.
-  </div>
+  <section style="margin-bottom:16px">
+    <div class="sec-head"><span class="sec-title">Novo Mapeamento</span></div>
+    <div style="padding:16px;display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
+      <div>
+        <label style="display:block;font-size:.7rem;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.06em;margin-bottom:5px">Código WMS</label>
+        <input id="new-wms" class="search" placeholder="ex: PROD-001" style="width:160px">
+      </div>
+      <div>
+        <label style="display:block;font-size:.7rem;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.06em;margin-bottom:5px">SKU Bling</label>
+        <input id="new-sku" class="search" placeholder="ex: SKU123" style="width:160px">
+      </div>
+      <div>
+        <label style="display:block;font-size:.7rem;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.06em;margin-bottom:5px">ID Produto Bling</label>
+        <input id="new-pid" class="search" type="number" placeholder="ex: 12345678" style="width:160px">
+      </div>
+      <button onclick="addMapping()" style="background:#22c55e;color:#000;border:none;border-radius:6px;padding:8px 18px;font-size:.8rem;font-weight:700;cursor:pointer">+ Adicionar</button>
+    </div>
+    <div id="map-msg" style="display:none;padding:8px 16px;font-size:.78rem;border-top:1px solid #334155"></div>
+  </section>
   <section>
     <div class="sec-head">
       <span class="sec-title">Mapeamentos WMS ↔ Bling</span>
       <span class="sec-meta">${mappings.length} total · ${mappings.filter((m: Record<string,unknown>) => m['active']).length} ativos</span>
     </div>
     <table>
-      <thead><tr><th>Código WMS</th><th>SKU Bling</th><th>ID Produto Bling</th><th>Status</th><th>Cadastrado</th></tr></thead>
+      <thead><tr><th>Código WMS</th><th>SKU Bling</th><th>ID Produto Bling</th><th>Status</th><th>Cadastrado</th><th>Ações</th></tr></thead>
       <tbody>${mapRows}</tbody>
     </table>
   </section>
@@ -381,8 +410,26 @@ input.search:focus{border-color:#3b82f6}
         <tr><td><span style="background:#2e1065;color:#d8b4fe;padding:2px 8px;border-radius:4px;font-size:.7rem;font-weight:600">CRON</span></td><td style="font-family:monospace">/api/crons/process-queue</td><td>Processa fila (00:00 UTC diário)</td></tr>
         <tr><td><span style="background:#2e1065;color:#d8b4fe;padding:2px 8px;border-radius:4px;font-size:.7rem;font-weight:600">CRON</span></td><td style="font-family:monospace">/api/crons/reconcile</td><td>Reconcilia estoque (01:00 UTC)</td></tr>
         <tr><td><span style="background:#14532d;color:#86efac;padding:2px 8px;border-radius:4px;font-size:.7rem;font-weight:600">GET</span></td><td style="font-family:monospace">/api/status</td><td>Este dashboard</td></tr>
+        <tr><td><span style="background:#14532d;color:#86efac;padding:2px 8px;border-radius:4px;font-size:.7rem;font-weight:600">GET/POST</span></td><td style="font-family:monospace">/api/admin/login</td><td>Login do dashboard</td></tr>
+        <tr><td><span style="background:#1e3a5f;color:#93c5fd;padding:2px 8px;border-radius:4px;font-size:.7rem;font-weight:600">POST</span></td><td style="font-family:monospace">/api/admin/requeue</td><td>Reprocessar evento DLQ/quarentena</td></tr>
+        <tr><td><span style="background:#1e3a5f;color:#93c5fd;padding:2px 8px;border-radius:4px;font-size:.7rem;font-weight:600">GET/POST/PATCH/DELETE</span></td><td style="font-family:monospace">/api/admin/mappings</td><td>CRUD de mapeamentos WMS↔Bling</td></tr>
+        <tr><td><span style="background:#2e1065;color:#d8b4fe;padding:2px 8px;border-radius:4px;font-size:.7rem;font-weight:600">CRON/POST</span></td><td style="font-family:monospace">/api/crons/refresh-token</td><td>Renova token Bling (02:00 UTC)</td></tr>
       </tbody>
     </table>
+  </section>
+
+  <section>
+    <div class="sec-head"><span class="sec-title">Cron Externo (recomendado)</span></div>
+    <div style="padding:16px;font-size:.8rem;color:#94a3b8;line-height:1.7">
+      <p style="margin-bottom:10px">O Vercel Hobby só permite crons 1×/dia. Para processar a fila a cada 30 minutos, configure um cron gratuito em <strong style="color:#e2e8f0">cron-job.org</strong>:</p>
+      <div style="background:#0f172a;border:1px solid #334155;border-radius:6px;padding:12px 16px;font-family:monospace;font-size:.75rem;color:#86efac;line-height:1.8">
+        URL: https://blingxwms-marketplace-s-projects1.vercel.app/api/crons/process-queue<br>
+        Método: POST<br>
+        Header: Authorization: Bearer ce419bfc77f6d6ce41ee70d2d6e36f8c453abf28de9ae198<br>
+        Intervalo: a cada 30 minutos
+      </div>
+      <p style="margin-top:10px">Configure também para o refresh-token a cada 4 horas (mesma URL base com /api/crons/refresh-token).</p>
+    </div>
   </section>
 </div>
 
@@ -431,6 +478,65 @@ setInterval(() => {
 // Hash-based tab switching
 const hashMap = {'#events':'events','#estoque':'estoque','#mappings':'mappings','#baixas':'baixas','#config':'config'};
 if (hashMap[location.hash]) showTab(hashMap[location.hash]);
+
+// Requeue DLQ/quarantine event
+async function requeue(id) {
+  if (!confirm('Reprocessar este evento? Ele voltará para a fila como pendente.')) return;
+  const r = await fetch('/api/admin/requeue', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ id })
+  });
+  if (r.ok) { location.reload(); }
+  else { const d = await r.json(); alert('Erro: ' + (d.erro ?? r.status)); }
+}
+
+// Mappings CRUD
+async function addMapping() {
+  const wms_code = document.getElementById('new-wms').value.trim();
+  const bling_sku = document.getElementById('new-sku').value.trim();
+  const bling_product_id = parseInt(document.getElementById('new-pid').value);
+  const msg = document.getElementById('map-msg');
+  if (!wms_code || !bling_sku || !bling_product_id) {
+    showMsg(msg, 'Preencha todos os campos.', '#ef4444'); return;
+  }
+  const r = await fetch('/api/admin/mappings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ wms_code, bling_sku, bling_product_id })
+  });
+  if (r.ok) { location.reload(); }
+  else { const d = await r.json(); showMsg(msg, 'Erro: ' + (d.erro ?? r.status), '#ef4444'); }
+}
+
+async function toggleMapping(id, active) {
+  const r = await fetch('/api/admin/mappings', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ id, active: !active })
+  });
+  if (r.ok) location.reload();
+  else alert('Erro ao atualizar mapeamento');
+}
+
+async function deleteMapping(id) {
+  if (!confirm('Excluir este mapeamento permanentemente?')) return;
+  const r = await fetch('/api/admin/mappings?id=' + encodeURIComponent(id), {
+    method: 'DELETE',
+    credentials: 'include'
+  });
+  if (r.ok) location.reload();
+  else alert('Erro ao excluir mapeamento');
+}
+
+function showMsg(el, text, color) {
+  el.style.display = 'block';
+  el.style.color = color;
+  el.textContent = text;
+}
 </script>
 </body>
 </html>`;

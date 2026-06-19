@@ -2,6 +2,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { claimBatch, markDone, markFailed } from '../../lib/services/queue';
 import { processBaixa, processExpedition } from '../../lib/services/stock';
 import { logger } from '../../lib/logger';
+import { sendAlert } from '../../lib/alerts';
 import type { WebhookEvent } from '../../lib/types';
 
 /**
@@ -51,6 +52,7 @@ export default async function handler(
           });
         } catch (err) {
           falhas++;
+          const willBeDlq = event.retry_count + 1 >= 3;
           await markFailed(event.id, event.retry_count, String(err));
           logger.error('process-queue', 'Falha no processamento de evento', {
             event_id: event.id,
@@ -58,6 +60,13 @@ export default async function handler(
             erro: String(err),
             duracao_ms: Date.now() - eventStart,
           });
+          if (willBeDlq) {
+            await sendAlert(
+              '⚠️ Evento foi para DLQ',
+              `**ID:** ${event.id}\n**Origem:** ${event.source}\n**Tipo:** ${event.event_type}\n**Erro:** ${String(err).slice(0, 500)}\n\nAcesse o dashboard para reprocessar.`,
+              'error'
+            );
+          }
         }
       })
     );
