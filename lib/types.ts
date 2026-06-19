@@ -116,6 +116,21 @@ export interface StockSnapshot {
   snapshot_at: string;
 }
 
+export interface PendingMapping {
+  id: string;
+  wms_code: string;
+  wms_product_name: string | null;
+  bling_sku: string | null;
+  bling_product_id: number | null;
+  bling_product_name: string | null;
+  confidence: number;
+  match_method: 'exact_code' | 'fuzzy_name' | 'manual';
+  status: 'pending' | 'approved' | 'rejected';
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 // ── Bling API Payloads ───────────────────────────────────────
 
 export interface BlingStockMovement {

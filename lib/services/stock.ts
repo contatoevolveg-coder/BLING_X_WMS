@@ -3,6 +3,7 @@ import { logger } from '../logger';
 import { deductStock } from '../adapters/bling';
 import { createExpeditionByProducts } from '../adapters/wms';
 import { markQuarantine } from './queue';
+import { tryAutoMap } from './auto-map';
 import type {
   WebhookEvent,
   WMSWebhookPayload,
@@ -99,16 +100,22 @@ export async function processBaixa(event: WebhookEvent): Promise<void> {
       continue;
     }
 
-    const blingProductId = mappingsByWmsCode.get(produto.codigoProduto);
+    let blingProductId = mappingsByWmsCode.get(produto.codigoProduto);
 
-    // Regra de Negócio: Se um item não existe no mapeamento, aborta a operação (Quarentena)
     if (!blingProductId) {
-      await markQuarantine(
-        event.id,
-        `Nenhum mapeamento ativo para o código WMS "${produto.codigoProduto}" ` +
-          `(expedição ${codigoInterno})`
-      );
-      return;
+      // Tenta auto-mapear antes de quarentenar
+      const autoResult = await tryAutoMap(produto.codigoProduto);
+      if (autoResult) {
+        blingProductId = autoResult.blingProductId;
+        logger.info('stock-service', `Auto-mapeamento aplicado para "${produto.codigoProduto}"`);
+      } else {
+        await markQuarantine(
+          event.id,
+          `Código WMS "${produto.codigoProduto}" sem mapeamento (expedição ${codigoInterno}). ` +
+            `Sugestão salva em "Auto-scan" — reprocesse após aprovar.`
+        );
+        return;
+      }
     }
 
     resolvedProducts.push({
@@ -220,15 +227,28 @@ export async function processExpedition(event: WebhookEvent): Promise<void> {
 
   // Valida e traduz os itens do pedido Bling para o formato exigido pelo WMS
   for (const item of itens) {
-    const wmsCode = mappingsByBlingId.get(item.produto.id);
+    let wmsCode = mappingsByBlingId.get(item.produto.id);
 
     if (!wmsCode) {
-      await markQuarantine(
-        event.id,
-        `Nenhum mapeamento ativo para o Produto Bling ID ${item.produto.id} ` +
-          `(código: "${item.produto.codigo}", pedido ${pedido.id})`
-      );
-      return; // Interrompe imediatamente, joga para quarentena
+      const autoResult = await tryAutoMap(item.produto.codigo, item.produto.nome);
+      if (autoResult) {
+        // Auto-mapeou: busca o wms_code que foi criado
+        const { data: newMap } = await getSupabase()
+          .from('product_mappings')
+          .select('wms_code')
+          .eq('bling_product_id', item.produto.id)
+          .eq('active', true)
+          .single();
+        wmsCode = newMap?.wms_code as string | undefined;
+      }
+      if (!wmsCode) {
+        await markQuarantine(
+          event.id,
+          `Produto Bling ID ${item.produto.id} ("${item.produto.codigo}") sem mapeamento ` +
+            `(pedido ${pedido.id}). Sugestão salva em "Auto-scan" — reprocesse após aprovar.`
+        );
+        return;
+      }
     }
 
     wmsProducts.push({

@@ -182,6 +182,23 @@ export async function listProducts(
 }
 
 /**
+ * Searches Bling products by exact code/SKU — used for auto-mapping.
+ * Returns [] on error so callers can fall through gracefully.
+ */
+export async function searchProductsByCode(
+  code: string
+): Promise<Array<{ id: number; nome: string; codigo: string }>> {
+  try {
+    const res = await blingRequest<{
+      data?: Array<{ id: number; nome: string; codigo: string }>;
+    }>('GET', `/produtos?criterio=2&tipo=T&pagina=1&limite=10&codigo=${encodeURIComponent(code)}`);
+    return res.data ?? [];
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Exchanges an OAuth authorization code for access + refresh tokens
  * and persists them in the bling_tokens table.
  */
