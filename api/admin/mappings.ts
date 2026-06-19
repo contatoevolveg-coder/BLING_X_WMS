@@ -26,9 +26,34 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     return;
   }
 
-  // POST — create mapping
+  // POST — create mapping OR requeue event (action: 'requeue')
   if (req.method === 'POST') {
-    const body = req.body as { wms_code?: string; bling_sku?: string; bling_product_id?: number } | undefined;
+    const body = req.body as { action?: string; id?: string; wms_code?: string; bling_sku?: string; bling_product_id?: number } | undefined;
+
+    // Requeue a failed/dlq/quarantine event
+    if (body?.action === 'requeue') {
+      const id = body.id;
+      if (!id) { res.status(400).json({ erro: 'Campo id obrigatório' }); return; }
+
+      const { data: event, error: fetchErr } = await db
+        .from('webhook_events').select('id, status').eq('id', id).single();
+
+      if (fetchErr || !event) { res.status(404).json({ erro: 'Evento não encontrado' }); return; }
+
+      if (!['dlq', 'quarantine', 'failed'].includes(event.status)) {
+        res.status(400).json({ erro: `Status "${event.status}" não permite reprocessamento` });
+        return;
+      }
+
+      const { error: updateErr } = await db
+        .from('webhook_events')
+        .update({ status: 'pending', retry_count: 0, error: null })
+        .eq('id', id);
+
+      if (updateErr) { res.status(500).json({ erro: updateErr.message }); return; }
+      res.status(200).json({ sucesso: true, id });
+      return;
+    }
 
     if (!body?.wms_code || !body?.bling_sku || !body?.bling_product_id) {
       res.status(400).json({ erro: 'Campos obrigatórios: wms_code, bling_sku, bling_product_id' });

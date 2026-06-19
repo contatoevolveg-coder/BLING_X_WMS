@@ -398,7 +398,7 @@ label.lbl{display:block;font-size:.65rem;font-weight:700;color:#475569;text-tran
       <tr><td><span style="background:#14532d;color:#86efac;padding:2px 9px;border-radius:4px;font-size:.68rem;font-weight:600">GET</span></td><td style="font-family:monospace">/api/auth/start</td><td>Inicia OAuth com Bling</td></tr>
       <tr><td><span style="background:#1e3a5f;color:#93c5fd;padding:2px 9px;border-radius:4px;font-size:.68rem;font-weight:600">POST</span></td><td style="font-family:monospace">/api/webhooks/bling</td><td>Webhook Bling ERP</td></tr>
       <tr><td><span style="background:#1e3a5f;color:#93c5fd;padding:2px 9px;border-radius:4px;font-size:.68rem;font-weight:600">POST</span></td><td style="font-family:monospace">/api/webhooks/wms/[token]</td><td>Webhook WMS Smartgo</td></tr>
-      <tr><td><span style="background:#1e3a5f;color:#93c5fd;padding:2px 9px;border-radius:4px;font-size:.68rem;font-weight:600">POST</span></td><td style="font-family:monospace">/api/admin/requeue</td><td>Reprocessar evento DLQ</td></tr>
+      <tr><td><span style="background:#1e3a5f;color:#93c5fd;padding:2px 9px;border-radius:4px;font-size:.68rem;font-weight:600">POST</span></td><td style="font-family:monospace">/api/admin/mappings</td><td>Reprocessar evento DLQ (action:requeue)</td></tr>
       <tr><td><span style="background:#1e3a5f;color:#93c5fd;padding:2px 9px;border-radius:4px;font-size:.68rem;font-weight:600">CRUD</span></td><td style="font-family:monospace">/api/admin/mappings</td><td>CRUD de mapeamentos</td></tr>
       <tr><td><span style="background:#1e3a5f;color:#93c5fd;padding:2px 9px;border-radius:4px;font-size:.68rem;font-weight:600">CRUD</span></td><td style="font-family:monospace">/api/admin/pending-mappings</td><td>Aprovação de auto-scan</td></tr>
       <tr><td><span style="background:#3b0764;color:#d8b4fe;padding:2px 9px;border-radius:4px;font-size:.68rem;font-weight:600">CRON</span></td><td style="font-family:monospace">/api/crons/process-queue</td><td>Processa fila (00:00 UTC)</td></tr>
@@ -450,7 +450,7 @@ function applyEvFilters() {
 
 async function requeue(id) {
   if (!confirm('Reprocessar este evento? Voltará para a fila como pendente.')) return;
-  const r = await fetch('/api/admin/requeue',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'include',body:JSON.stringify({id})});
+  const r = await fetch('/api/admin/mappings',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'include',body:JSON.stringify({action:'requeue',id})});
   if (r.ok) location.reload(); else { const d=await r.json(); alert('Erro: '+(d.erro??r.status)); }
 }
 
