@@ -86,30 +86,73 @@ async function getValidAccessToken(): Promise<string> {
   return refreshed.access_token;
 }
 
+// ── Rate Limiter ───────────────────────────────────────────────
+
+class BlingRateLimiter {
+  private lastRequestTime = 0;
+  private readonly minDelay = 334; // 3 requests per second = ~334ms delay
+  private queue: Array<() => void> = [];
+  private isProcessing = false;
+
+  async enqueue<T>(fn: () => Promise<T>): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      this.queue.push(async () => {
+        try {
+          const now = Date.now();
+          const timeSinceLast = now - this.lastRequestTime;
+          if (timeSinceLast < this.minDelay) {
+            await new Promise(r => setTimeout(r, this.minDelay - timeSinceLast));
+          }
+          this.lastRequestTime = Date.now();
+          const result = await fn();
+          resolve(result);
+        } catch (err) {
+          reject(err);
+        }
+      });
+      this.processQueue();
+    });
+  }
+
+  private async processQueue() {
+    if (this.isProcessing) return;
+    this.isProcessing = true;
+    while (this.queue.length > 0) {
+      const task = this.queue.shift();
+      if (task) await task();
+    }
+    this.isProcessing = false;
+  }
+}
+
+const rateLimiter = new BlingRateLimiter();
+
 async function blingRequest<T>(
   method: string,
   path: string,
   body?: unknown
 ): Promise<T> {
-  const accessToken = await getValidAccessToken();
-  const url = `${BLING_BASE_URL}${path}`;
+  return rateLimiter.enqueue(async () => {
+    const accessToken = await getValidAccessToken();
+    const url = `${BLING_BASE_URL}${path}`;
 
-  const res = await fetchWithRetry(url, {
-    method,
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      'Content-Type': 'application/json',
-      Accept: 'application/json',
-    },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
+    const res = await fetchWithRetry(url, {
+      method,
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Bling ${method} ${path} → ${res.status}: ${text}`);
+    }
+
+    return res.json() as Promise<T>;
   });
-
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Bling ${method} ${path} → ${res.status}: ${text}`);
-  }
-
-  return res.json() as Promise<T>;
 }
 
 // ── Public API ───────────────────────────────────────────────
@@ -194,6 +237,34 @@ export async function listAllProducts(): Promise<Array<{ id: number; nome: strin
     page++;
   }
   return all;
+}
+
+/**
+ * Fetches ALL Bling products with gtin (barcode) populated.
+ * The list endpoint does not return gtin — each product must be fetched individually.
+ * Uses batches of 5 to balance throughput vs Bling 429 rate limits.
+ * Products already known to have no gtin (knownNoGtin set) are skipped.
+ */
+export async function listAllProductsWithGtin(): Promise<Array<{ id: number; nome: string; codigo: string; gtin: string | null }>> {
+  const products = await listAllProducts();
+  const result: Array<{ id: number; nome: string; codigo: string; gtin: string | null }> = [];
+  const batchSize = 5;
+  for (let i = 0; i < products.length; i += batchSize) {
+    const batch = products.slice(i, i + batchSize);
+    const details = await Promise.all(
+      batch.map(p =>
+        blingRequest<{ data: { id: number; nome: string; codigo: string; gtin?: string } }>(
+          'GET', `/produtos/${p.id}`
+        )
+          .then(r => ({ id: r.data.id, nome: r.data.nome, codigo: r.data.codigo, gtin: r.data.gtin || null }))
+          .catch(() => ({ id: p.id, nome: p.nome, codigo: p.codigo, gtin: null }))
+      )
+    );
+    result.push(...details);
+  }
+
+  logger.info('bling-adapter', `listAllProductsWithGtin: ${result.filter(p => p.gtin).length}/${result.length} com barcode`);
+  return result;
 }
 
 /**

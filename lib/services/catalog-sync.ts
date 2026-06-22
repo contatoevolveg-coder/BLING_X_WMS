@@ -1,6 +1,6 @@
 import { getSupabase } from '../supabase';
 import { logger } from '../logger';
-import { listAllProducts } from '../adapters/bling';
+import { listAllProductsWithGtin } from '../adapters/bling';
 import { listWMSProductCatalog } from '../adapters/wms';
 import { getSetting } from '../settings';
 import type { SyncCatalogResult } from '../types';
@@ -61,10 +61,9 @@ export async function syncProductCatalog(): Promise<SyncCatalogResult> {
     () => process.env['WMS_DOC_DEPOSITANTE'] ?? ''
   );
 
-  const [blingProducts, wmsProducts] = await Promise.all([
-    listAllProducts(),
-    depositante ? listWMSProductCatalog(depositante) : Promise.resolve([]),
-  ]);
+  // listAllProductsWithGtin busca gtin individualmente (endpoint de lista não retorna gtin)
+  const blingProducts = await listAllProductsWithGtin();
+  const wmsProducts = await (depositante ? listWMSProductCatalog(depositante) : Promise.resolve([]));
 
   logger.info('catalog-sync', 'Fetched products', {
     bling: blingProducts.length,
