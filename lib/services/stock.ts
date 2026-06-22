@@ -263,11 +263,26 @@ export async function processExpedition(event: WebhookEvent): Promise<void> {
   }
 
   // Comunicação de Saída: Chama a API do WMS para criar a expedição
-  const result = await createExpeditionByProducts({
-    codigoExterno: `BLING-${pedido.id}`,
-    docDepositante: depositante,
-    produtos: wmsProducts,
-  });
+  let result: { codigoInterno: string };
+  try {
+    result = await createExpeditionByProducts({
+      codigoExterno: `BLING-${pedido.id}`,
+      docDepositante: depositante,
+      produtos: wmsProducts,
+    });
+  } catch (err) {
+    const msg = String(err);
+    // WMS retorna 404 quando a conta não está configurada para expedições
+    if (msg.includes('404')) {
+      await markQuarantine(
+        event.id,
+        `WMS não aceitou a expedição (404) para pedido Bling ${pedido.id}. ` +
+        `Verifique se o depositante está habilitado para criar expedições no Smartgo. Erro: ${msg}`
+      );
+      return;
+    }
+    throw err;
+  }
 
   logger.info('stock-service', 'Expedição criada no WMS com sucesso', {
     event_id: event.id,

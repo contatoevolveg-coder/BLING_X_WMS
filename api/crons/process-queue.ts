@@ -33,43 +33,42 @@ export default async function handler(
   let falhas = 0;
 
   try {
-    const events = await claimBatch(10);
+    // Batch size 5, sequential — avoid Bling rate limits (429) from parallel API calls
+    const events = await claimBatch(5);
 
     logger.info('process-queue', `Claimed ${events.length} event(s)`);
 
-    await Promise.allSettled(
-      events.map(async (event) => {
-        const eventStart = Date.now();
-        try {
-          await route(event);
-          await markDone(event.id);
-          processados++;
-          logger.info('process-queue', 'Evento processado com sucesso', {
-            event_id: event.id,
-            source: event.source,
-            event_type: event.event_type,
-            duracao_ms: Date.now() - eventStart,
-          });
-        } catch (err) {
-          falhas++;
-          const willBeDlq = event.retry_count + 1 >= 3;
-          await markFailed(event.id, event.retry_count, String(err));
-          logger.error('process-queue', 'Falha no processamento de evento', {
-            event_id: event.id,
-            source: event.source,
-            erro: String(err),
-            duracao_ms: Date.now() - eventStart,
-          });
-          if (willBeDlq) {
-            await sendAlert(
-              '⚠️ Evento foi para DLQ',
-              `**ID:** ${event.id}\n**Origem:** ${event.source}\n**Tipo:** ${event.event_type}\n**Erro:** ${String(err).slice(0, 500)}\n\nAcesse o dashboard para reprocessar.`,
-              'error'
-            );
-          }
+    for (const event of events) {
+      const eventStart = Date.now();
+      try {
+        await route(event);
+        await markDone(event.id);
+        processados++;
+        logger.info('process-queue', 'Evento processado com sucesso', {
+          event_id: event.id,
+          source: event.source,
+          event_type: event.event_type,
+          duracao_ms: Date.now() - eventStart,
+        });
+      } catch (err) {
+        falhas++;
+        const willBeDlq = event.retry_count + 1 >= 3;
+        await markFailed(event.id, event.retry_count, String(err));
+        logger.error('process-queue', 'Falha no processamento de evento', {
+          event_id: event.id,
+          source: event.source,
+          erro: String(err),
+          duracao_ms: Date.now() - eventStart,
+        });
+        if (willBeDlq) {
+          await sendAlert(
+            '⚠️ Evento foi para DLQ',
+            `**ID:** ${event.id}\n**Origem:** ${event.source}\n**Tipo:** ${event.event_type}\n**Erro:** ${String(err).slice(0, 500)}\n\nAcesse o dashboard para reprocessar.`,
+            'error'
+          );
         }
-      })
-    );
+      }
+    }
 
     res.status(200).json({
       sucesso: true,
