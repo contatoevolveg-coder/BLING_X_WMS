@@ -4,6 +4,11 @@ import type { WebhookEvent, WebhookSource } from '../types';
 
 const MAX_RETRIES = 3;
 
+// Thrown by markQuarantine so the cron loop knows NOT to call markDone
+export class QuarantineError extends Error {
+  constructor(reason: string) { super(reason); this.name = 'QuarantineError'; }
+}
+
 export interface EnqueueResult {
   enqueued: boolean;
   id: string | null;
@@ -107,7 +112,7 @@ export async function markFailed(
 export async function markQuarantine(
   id: string,
   reason: string
-): Promise<void> {
+): Promise<never> {
   const db = getSupabase();
   const { error } = await db
     .from('webhook_events')
@@ -120,4 +125,5 @@ export async function markQuarantine(
 
   if (error) throw new Error(`markQuarantine failed: ${error.message}`);
   logger.warn('queue', `Event ${id} quarantined`, { reason });
+  throw new QuarantineError(reason);
 }

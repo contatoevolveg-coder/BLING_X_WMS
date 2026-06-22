@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { claimBatch, markDone, markFailed } from '../../lib/services/queue';
+import { claimBatch, markDone, markFailed, QuarantineError } from '../../lib/services/queue';
 import { processBaixa, processExpedition } from '../../lib/services/stock';
 import { logger } from '../../lib/logger';
 import { sendAlert } from '../../lib/alerts';
@@ -51,6 +51,11 @@ export default async function handler(
           duracao_ms: Date.now() - eventStart,
         });
       } catch (err) {
+        // QuarantineError: event was intentionally quarantined — not a failure
+        if (err instanceof QuarantineError) {
+          processados++;
+          continue;
+        }
         falhas++;
         const willBeDlq = event.retry_count + 1 >= 3;
         await markFailed(event.id, event.retry_count, String(err));
