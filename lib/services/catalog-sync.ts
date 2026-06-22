@@ -93,15 +93,18 @@ export async function syncProductCatalog(): Promise<SyncCatalogResult> {
   }));
   await upsertBatch('product_catalog', wmsRows, 'platform,platform_id');
 
-  // ── 4. Build in-memory index: barcode → Bling item ──────────
+  // ── 4. Build in-memory indexes: barcode + code → Bling item ──
   const { data: blingCatalog } = await db
     .from('product_catalog')
     .select('platform_id, code, name, barcode')
-    .eq('platform', 'bling')
-    .not('barcode', 'is', null);
+    .eq('platform', 'bling');
 
   const blingByBarcode = new Map(
-    (blingCatalog ?? []).map(b => [b.barcode as string, b])
+    (blingCatalog ?? []).filter(b => b.barcode).map(b => [b.barcode as string, b])
+  );
+
+  const blingByCode = new Map(
+    (blingCatalog ?? []).map(b => [b.code.toLowerCase(), b])
   );
 
   // ── 5. Build in-memory index: code → WMS item ───────────────
@@ -133,6 +136,7 @@ export async function syncProductCatalog(): Promise<SyncCatalogResult> {
   for (const wmsItem of (wmsCatalog ?? [])) {
     if (mappedCodes.has(wmsItem.code) || pendingCodes.has(wmsItem.code)) continue;
 
+    // Try barcode match first
     if (wmsItem.barcode) {
       const blingMatch = blingByBarcode.get(wmsItem.barcode);
       if (blingMatch) {
@@ -149,6 +153,23 @@ export async function syncProductCatalog(): Promise<SyncCatalogResult> {
         logger.info('catalog-sync', `Barcode match: "${wmsItem.code}" → "${blingMatch.code}" (${wmsItem.barcode})`);
         continue;
       }
+    }
+
+    // Try exact code match (WMS code = Bling code, case-insensitive)
+    const codeMatch = blingByCode.get(wmsItem.code.toLowerCase());
+    if (codeMatch) {
+      mappingsToInsert.push({
+        wms_code: wmsItem.code,
+        bling_sku: codeMatch.code,
+        bling_product_id: parseInt(codeMatch.platform_id),
+        barcode: wmsItem.barcode ?? null,
+        display_name: wmsItem.name || codeMatch.name,
+        active: true,
+      });
+      mappedCodes.add(wmsItem.code);
+      autoMapped++;
+      logger.info('catalog-sync', `Code match: "${wmsItem.code}" → "${codeMatch.code}"`);
+      continue;
     }
 
     // ── 8. Fuzzy name match for unmapped items ───────────────
