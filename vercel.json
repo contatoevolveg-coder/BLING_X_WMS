@@ -17,7 +17,6 @@
     }
   ],
   "functions": {
-    "api/**/*.ts": { "maxDuration": 10 },
-    "api/admin/mappings.ts": { "maxDuration": 60 }
+    "api/**/*.ts": { "maxDuration": 60 }
   }
 }
