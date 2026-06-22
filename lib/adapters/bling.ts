@@ -197,6 +197,28 @@ export async function listAllProducts(): Promise<Array<{ id: number; nome: strin
 }
 
 /**
+ * Fetches a single Bling order by ID with full item list.
+ * Endpoint: GET /Api/v3/pedidos/vendas/{id}
+ * The webhook payload only carries the order header — call this to get itens.
+ */
+export async function getOrderById(id: number): Promise<{
+  id: number;
+  situacao?: { id: number; nome?: string };
+  itens?: Array<{ id: number; produto: { id: number; codigo: string; nome: string }; quantidade: number }>;
+  [key: string]: unknown;
+}> {
+  const res = await blingRequest<{
+    data: {
+      id: number;
+      situacao?: { id: number; nome?: string };
+      itens?: Array<{ id: number; produto: { id: number; codigo: string; nome: string }; quantidade: number }>;
+      [key: string]: unknown;
+    };
+  }>('GET', `/pedidos/vendas/${id}`);
+  return res.data;
+}
+
+/**
  * Searches Bling products by exact code/SKU — used for auto-mapping.
  * Returns [] on error so callers can fall through gracefully.
  */

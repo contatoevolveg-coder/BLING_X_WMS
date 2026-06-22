@@ -1,6 +1,6 @@
 import { getSupabase } from '../supabase';
 import { logger } from '../logger';
-import { deductStock } from '../adapters/bling';
+import { deductStock, getOrderById } from '../adapters/bling';
 import { createExpeditionByProducts } from '../adapters/wms';
 import { markQuarantine } from './queue';
 import { tryAutoMap } from './auto-map';
@@ -192,7 +192,12 @@ export async function processExpedition(event: WebhookEvent): Promise<void> {
     return;
   }
 
-  const itens = pedido.itens;
+  // Webhook only sends the order header — fetch full order if itens are missing
+  let itens = pedido.itens;
+  if (!itens?.length) {
+    const fullOrder = await getOrderById(pedido.id);
+    itens = fullOrder.itens;
+  }
   if (!itens?.length) {
     throw new Error(
       `Pedido Bling ${pedido.id} não possui itens — impossível criar expedição`
