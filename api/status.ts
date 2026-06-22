@@ -542,12 +542,12 @@ async function syncCatalog() {
     if(r.ok&&d.sucesso){
       if(res){
         res.style.display='block';
-        res.innerHTML=`<span style="color:#86efac;font-weight:700">✓ Sincronização concluída!</span><br>
-          Bling: <strong>${d.bling_synced}</strong> produtos &nbsp;·&nbsp;
-          WMS: <strong>${d.wms_synced}</strong> produtos &nbsp;·&nbsp;
-          Auto-mapeados por barcode: <strong style="color:#c4b5fd">${d.auto_mapped}</strong> &nbsp;·&nbsp;
-          Sugestões criadas: <strong style="color:#fde68a">${d.pending_created}</strong> &nbsp;·&nbsp;
-          Duração: ${Math.round(d.duration_ms/1000)}s`;
+        res.innerHTML='<span style="color:#86efac;font-weight:700">&#10003; Sincronização concluída!</span><br>'
+          +' Bling: <strong>'+d.bling_synced+'</strong> produtos &nbsp;&middot;&nbsp;'
+          +' WMS: <strong>'+d.wms_synced+'</strong> produtos &nbsp;&middot;&nbsp;'
+          +' Auto-mapeados por barcode: <strong style="color:#c4b5fd">'+d.auto_mapped+'</strong> &nbsp;&middot;&nbsp;'
+          +' Sugestões criadas: <strong style="color:#fde68a">'+d.pending_created+'</strong> &nbsp;&middot;&nbsp;'
+          +' Duração: '+Math.round(d.duration_ms/1000)+'s';
       }
       setTimeout(()=>location.reload(),2500);
     } else {

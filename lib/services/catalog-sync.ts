@@ -155,7 +155,7 @@ export async function syncProductCatalog(): Promise<SyncCatalogResult> {
     if (!wmsItem.name) continue;
 
     let bestScore = 0;
-    let bestBling: typeof blingCatalog extends (infer T)[] | null ? T : never | null = null;
+    let bestBling: { platform_id: any; code: any; name: any; barcode: any } | null = null;
 
     for (const b of (blingCatalog ?? [])) {
       const score = tokenSimilarity(wmsItem.name, b.name);
@@ -196,6 +196,6 @@ export async function syncProductCatalog(): Promise<SyncCatalogResult> {
     duration_ms: Date.now() - t0,
   };
 
-  logger.info('catalog-sync', 'Sync complete', result);
+  logger.info('catalog-sync', 'Sync complete', { ...result });
   return result;
 }
