@@ -173,5 +173,6 @@ export async function pingWmsConnection(
     },
   });
 
-  return res.ok;
+  // 200 = conectado com dados; 404 = conectado mas sem dados cadastrados ainda — ambos válidos
+  return res.ok || res.status === 404;
 }
