@@ -1,6 +1,7 @@
 import { VercelRequest, VercelResponse } from '@vercel/node';
 import { setSetting } from '../../lib/settings';
 import { pingWmsConnection } from '../../lib/adapters/wms';
+import { isDashAuthenticated } from '../../lib/auth';
 import { logger } from '../../lib/logger';
 import { z } from 'zod';
 
@@ -17,15 +18,13 @@ const configSchema = z.object({
  * Body: { wms_api_key: '...', wms_base_url: '...', wms_doc_depositante: '...' }
  */
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  if (req.method !== 'POST') {
-    res.status(405).json({ erro: 'Método não permitido' });
+  if (!isDashAuthenticated(req)) {
+    res.status(401).json({ erro: 'Não autorizado' });
     return;
   }
 
-  // Basic auth check (in production, use a proper secret token or auth middleware)
-  const authHeader = req.headers.authorization;
-  if (!authHeader || authHeader !== `Bearer ${process.env['CRON_SECRET']}`) {
-    res.status(401).json({ erro: 'Não autorizado' });
+  if (req.method !== 'POST') {
+    res.status(405).json({ erro: 'Método não permitido' });
     return;
   }
 

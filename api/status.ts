@@ -20,7 +20,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
       db.from('stock_snapshots').select('*').order('snapshot_at', { ascending: false }).limit(200),
       db.from('processed_baixas').select('*').order('created_at', { ascending: false }).limit(100),
       db.from('system_settings').select('*'),
-      db.from('product_catalog').select('platform, barcode').neq('barcode', null),
+      db.from('product_catalog').select('platform, barcode'),
     ]);
 
   const token     = tokenRes.data;
@@ -30,10 +30,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
   const snapshots = snapshotsRes.data ?? [];
   const baixas    = baixasRes.data    ?? [];
   const settings  = settingsRes.data  ?? [];
-  const catalogItems = catalogRes.data ?? [];
-  const catalogBling = catalogItems.filter((c:Record<string,unknown>) => c['platform']==='bling').length;
-  const catalogWms   = catalogItems.filter((c:Record<string,unknown>) => c['platform']==='wms').length;
-  const catalogSynced = catalogBling > 0 || catalogWms > 0;
+  const catalogItems    = catalogRes.data ?? [];
+  const catalogBling    = catalogItems.filter((c:Record<string,unknown>) => c['platform']==='bling').length;
+  const catalogWms      = catalogItems.filter((c:Record<string,unknown>) => c['platform']==='wms').length;
+  const blingWithBarcode= catalogItems.filter((c:Record<string,unknown>) => c['platform']==='bling' && c['barcode']).length;
+  const wmsWithBarcode  = catalogItems.filter((c:Record<string,unknown>) => c['platform']==='wms'   && c['barcode']).length;
+  const catalogSynced   = catalogBling > 0 || catalogWms > 0;
+  const wmsConfigured   = settings.some((s:Record<string,unknown>) => s['key']==='WMS_API_KEY') || !!process.env['WMS_API_KEY'];
 
   const tokenExpiry = token ? new Date(token.expires_at) : null;
   const tokenValid  = tokenExpiry ? tokenExpiry > now : false;
@@ -387,21 +390,29 @@ label.lbl{display:block;font-size:.65rem;font-weight:700;color:#475569;text-tran
     <div><div class="page-title">Auto-scan de Produtos</div><div class="page-sub">Matching automático por código de barras EAN/GTIN + similaridade de nome</div></div>
     <button onclick="syncCatalog()" id="sync-btn" style="background:#7c3aed;color:#ede9fe;border:none;border-radius:6px;padding:8px 18px;font-size:.78rem;font-weight:700;cursor:pointer">⟳ Sincronizar Catálogo</button>
   </div>
-  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:14px">
+  ${!wmsConfigured?`<div style="background:#78350f;border:1px solid #b45309;border-radius:8px;padding:10px 16px;margin-bottom:12px;font-size:.78rem;color:#fde68a">
+    ⚠️ <strong>Credenciais WMS não configuradas.</strong> Vá em <span style="cursor:pointer;text-decoration:underline" onclick="showView('config',document.querySelector('.nav-item:nth-last-child(2)'))">Configurações</span> e informe a API Key, URL e CNPJ Depositante do WMS para ativar a sincronização.
+  </div>`:''}
+  <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:10px;margin-bottom:14px">
     <div style="background:#1e293b;border:1px solid #334155;border-radius:8px;padding:12px 16px">
       <div style="font-size:.62rem;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px">Catálogo Bling</div>
       <div style="font-size:1.5rem;font-weight:700;color:${catalogBling>0?'#a78bfa':'#475569'}">${catalogBling}</div>
-      <div style="font-size:.7rem;color:#64748b;margin-top:3px">produtos com cod. barras</div>
+      <div style="font-size:.7rem;color:#64748b;margin-top:3px">${blingWithBarcode} com cod. barras</div>
     </div>
-    <div style="background:#1e293b;border:1px solid #334155;border-radius:8px;padding:12px 16px">
+    <div style="background:#1e293b;border:1px solid ${wmsConfigured?'#334155':'#7f1d1d'};border-radius:8px;padding:12px 16px">
       <div style="font-size:.62rem;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px">Catálogo WMS</div>
-      <div style="font-size:1.5rem;font-weight:700;color:${catalogWms>0?'#60a5fa':'#475569'}">${catalogWms}</div>
-      <div style="font-size:.7rem;color:#64748b;margin-top:3px">produtos com cod. barras</div>
+      <div style="font-size:1.5rem;font-weight:700;color:${catalogWms>0?'#60a5fa':wmsConfigured?'#475569':'#ef4444'}">${wmsConfigured?catalogWms:'N/C'}</div>
+      <div style="font-size:.7rem;color:${wmsConfigured?'#64748b':'#ef4444'};margin-top:3px">${wmsConfigured?`${wmsWithBarcode} com cod. barras`:'configurar credenciais'}</div>
+    </div>
+    <div style="background:${blingWithBarcode>0||wmsWithBarcode>0?'#1e3a5f':'#1e293b'};border:1px solid ${blingWithBarcode>0||wmsWithBarcode>0?'#2563eb':'#334155'};border-radius:8px;padding:12px 16px">
+      <div style="font-size:.62rem;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px">Match Barcode</div>
+      <div style="font-size:1.5rem;font-weight:700;color:${blingWithBarcode>0||wmsWithBarcode>0?'#93c5fd':'#475569'}">${blingWithBarcode+wmsWithBarcode}</div>
+      <div style="font-size:.7rem;color:#64748b;margin-top:3px">produtos com barcode</div>
     </div>
     <div style="background:${catalogSynced?'#14532d':'#450a0a'};border:1px solid ${catalogSynced?'#166534':'#7f1d1d'};border-radius:8px;padding:12px 16px">
-      <div style="font-size:.62rem;font-weight:700;color:${catalogSynced?'#4ade80':'#ef4444'};text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px">Status Catálogo</div>
-      <div style="font-size:1rem;font-weight:700;color:${catalogSynced?'#86efac':'#fca5a5'}">${catalogSynced?'Sincronizado':'Não sincronizado'}</div>
-      <div style="font-size:.7rem;color:${catalogSynced?'#4ade80':'#f87171'};margin-top:3px">${catalogSynced?'Matching por barcode ativo':'Clique em "Sincronizar Catálogo"'}</div>
+      <div style="font-size:.62rem;font-weight:700;color:${catalogSynced?'#4ade80':'#ef4444'};text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px">Status</div>
+      <div style="font-size:1rem;font-weight:700;color:${catalogSynced?'#86efac':'#fca5a5'}">${catalogSynced?'Sincronizado':'Pendente'}</div>
+      <div style="font-size:.7rem;color:${catalogSynced?'#4ade80':'#f87171'};margin-top:3px">${catalogSynced?'Catálogo importado':'Clique em Sincronizar'}</div>
     </div>
   </div>
   <div style="background:#1e3a5f;border:1px solid #2563eb;border-radius:8px;padding:12px 16px;margin-bottom:14px;font-size:.78rem;color:#93c5fd;line-height:1.7">
@@ -434,6 +445,18 @@ label.lbl{display:block;font-size:.65rem;font-weight:700;color:#475569;text-tran
   <div class="topbar"><div><div class="page-title">Configurações</div><div class="page-sub">Variáveis e endpoints do sistema</div></div></div>
   ${SEC('Configurações Salvas',`${settings.length} chave(s)`,`<table>${TH('Chave','Valor','Atualizado')}
     <tbody>${settingsTable}</tbody></table>`)}
+  ${SEC('Credenciais WMS',`${wmsConfigured?'<span style="color:#86efac">✓ Configurado</span>':'<span style="color:#fca5a5">⚠ Não configurado</span>'}`,`
+    <div class="form-row" style="flex-direction:column;gap:10px">
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;width:100%">
+        <div><label class="lbl">WMS API Key</label><input id="wms-key" class="inp" type="password" placeholder="Token da API Smartgo"></div>
+        <div><label class="lbl">URL Base WMS</label><input id="wms-url" class="inp" value="https://apigateway.smartgo.com.br" placeholder="https://apigateway.smartgo.com.br"></div>
+        <div><label class="lbl">CNPJ Depositante</label><input id="wms-doc" class="inp" placeholder="00.000.000/0001-00"></div>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px">
+        <button id="wms-cfg-btn" onclick="saveWmsConfig()" style="background:#3b82f6;color:#fff;border:none;border-radius:6px;padding:8px 18px;font-size:.78rem;font-weight:700;cursor:pointer">Testar e Salvar</button>
+        <div id="wms-cfg-msg" class="msg-box" style="display:none;margin:0"></div>
+      </div>
+    </div>`)}
   ${SEC('Endpoints da API','',`<table>${TH('Método','Rota','Descrição')}
     <tbody>
       <tr><td><span style="background:#14532d;color:#86efac;padding:2px 9px;border-radius:4px;font-size:.68rem;font-weight:600">GET</span></td><td style="font-family:monospace">/api/auth/start</td><td>Inicia OAuth com Bling</td></tr>
@@ -558,6 +581,23 @@ async function syncCatalog() {
   } finally {
     if(btn){btn.disabled=false;btn.textContent='⟳ Sincronizar Catálogo';}
   }
+}
+
+async function saveWmsConfig() {
+  const key=document.getElementById('wms-key').value.trim();
+  const url=document.getElementById('wms-url').value.trim();
+  const doc=document.getElementById('wms-doc').value.trim();
+  const msg=document.getElementById('wms-cfg-msg');
+  if(!key||!url||!doc){showMsg(msg,'Preencha todos os campos.','#ef4444');return;}
+  const btn=document.getElementById('wms-cfg-btn');
+  btn.disabled=true;btn.textContent='Testando conexão...';
+  try {
+    const r=await fetch('/api/settings/config',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'include',body:JSON.stringify({wms_api_key:key,wms_base_url:url,wms_doc_depositante:doc})});
+    const d=await r.json();
+    if(r.ok&&d.sucesso){showMsg(msg,'✓ '+d.mensagem,'#86efac');setTimeout(()=>location.reload(),1500);}
+    else{showMsg(msg,'Erro: '+(d.erro??'Falha desconhecida'),'#ef4444');}
+  } catch(e){showMsg(msg,'Erro de rede: '+e,'#ef4444');}
+  finally{btn.disabled=false;btn.textContent='Testar e Salvar';}
 }
 
 function showMsg(el,text,color) { el.style.display='block'; el.style.color=color; el.textContent=text; }
