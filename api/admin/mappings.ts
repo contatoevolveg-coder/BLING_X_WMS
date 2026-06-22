@@ -1,6 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { getSupabase } from '../../lib/supabase';
 import { isDashAuthenticated } from '../../lib/auth';
+import { syncProductCatalog } from '../../lib/services/catalog-sync';
 
 export default async function handler(req: VercelRequest, res: VercelResponse): Promise<void> {
   if (!isDashAuthenticated(req)) {
@@ -26,9 +27,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     return;
   }
 
-  // POST — create mapping OR requeue event (action: 'requeue')
+  // POST — create mapping | requeue event | sync catalog
   if (req.method === 'POST') {
     const body = req.body as { action?: string; id?: string; wms_code?: string; bling_sku?: string; bling_product_id?: number } | undefined;
+
+    // Sync product catalog from Bling + WMS and auto-create barcode mappings
+    if (body?.action === 'sync-catalog') {
+      try {
+        const result = await syncProductCatalog();
+        res.status(200).json({ sucesso: true, ...result });
+      } catch (err) {
+        res.status(500).json({ erro: String(err) });
+      }
+      return;
+    }
 
     // Requeue a failed/dlq/quarantine event
     if (body?.action === 'requeue') {

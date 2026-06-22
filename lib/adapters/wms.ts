@@ -4,6 +4,7 @@ import { getSetting } from '../settings';
 import type {
   WMSCreateExpeditionPayload,
   WMSStockItem,
+  WMSCatalogProduct,
 } from '../types';
 
 async function getBaseUrl(): Promise<string> {
@@ -95,6 +96,61 @@ export async function getExpedition(codigoInterno: string): Promise<unknown> {
     'GET',
     `/v2/expedicao?codigoInterno=${encodeURIComponent(codigoInterno)}`
   );
+}
+
+/**
+ * Fetches the WMS product catalog with barcodes for cross-platform matching.
+ * Tries the dedicated product endpoint first; falls back to stock balance.
+ * The barcode field may be in codigoBarras, ean, gtin, or codBarras depending on WMS config.
+ */
+export async function listWMSProductCatalog(depositante: string): Promise<WMSCatalogProduct[]> {
+  const baseUrl = await getBaseUrl();
+  const apiKey = await getApiKey();
+  const headers = { api_key: apiKey, 'Content-Type': 'application/json', Accept: 'application/json' };
+
+  // Try dedicated product catalog endpoint (Smartgo /v2/produto/listar)
+  const endpoints = [
+    `/v2/produto/listar?docDepositante=${encodeURIComponent(depositante)}&limite=500`,
+    `/v2/produto?docDepositante=${encodeURIComponent(depositante)}&limite=500`,
+    `/estoque/v2/produto?docDepositante=${encodeURIComponent(depositante)}&limite=500`,
+  ];
+
+  for (const path of endpoints) {
+    try {
+      const res = await fetchWithRetry(`${baseUrl}${path}`, { method: 'GET', headers });
+      if (res.ok) {
+        const data = await res.json() as { itens?: WMSCatalogProduct[]; data?: WMSCatalogProduct[]; produtos?: WMSCatalogProduct[] };
+        const items = data.itens ?? data.data ?? data.produtos ?? [];
+        if (items.length > 0) {
+          logger.info('wms-adapter', `WMS catalog fetched from ${path}`, { count: items.length });
+          return items;
+        }
+      }
+    } catch { /* try next */ }
+  }
+
+  // Fallback: stock balance has codes + names (may include barcodes as extra fields)
+  try {
+    const res = await fetchWithRetry(
+      `${baseUrl}/estoque/v2/saldo-detalhado?docDepositante=${encodeURIComponent(depositante)}`,
+      { method: 'GET', headers }
+    );
+    if (res.ok) {
+      const data = await res.json() as { itens?: (WMSCatalogProduct & { saldoFisico?: number })[] };
+      const items = (data.itens ?? []).map(i => ({
+        codigoProduto: i.codigoProduto,
+        descricao: i.descricao,
+        codigoBarras: i.codigoBarras,
+        ean: i.ean,
+        gtin: i.gtin,
+        codBarras: i.codBarras,
+      }));
+      logger.info('wms-adapter', 'WMS catalog via stock-balance fallback', { count: items.length });
+      return items;
+    }
+  } catch { /* no-op */ }
+
+  return [];
 }
 
 /**

@@ -11,7 +11,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
   const db = getSupabase();
   const now = new Date();
 
-  const [tokenRes, eventsRes, mappingsRes, pendingMapsRes, snapshotsRes, baixasRes, settingsRes] =
+  const [tokenRes, eventsRes, mappingsRes, pendingMapsRes, snapshotsRes, baixasRes, settingsRes, catalogRes] =
     await Promise.all([
       db.from('bling_tokens').select('expires_at, updated_at, scope').eq('singleton_key', 'default').single(),
       db.from('webhook_events').select('*').order('created_at', { ascending: false }).limit(200),
@@ -20,6 +20,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
       db.from('stock_snapshots').select('*').order('snapshot_at', { ascending: false }).limit(200),
       db.from('processed_baixas').select('*').order('created_at', { ascending: false }).limit(100),
       db.from('system_settings').select('*'),
+      db.from('product_catalog').select('platform, barcode').neq('barcode', null),
     ]);
 
   const token     = tokenRes.data;
@@ -29,6 +30,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
   const snapshots = snapshotsRes.data ?? [];
   const baixas    = baixasRes.data    ?? [];
   const settings  = settingsRes.data  ?? [];
+  const catalogItems = catalogRes.data ?? [];
+  const catalogBling = catalogItems.filter((c:Record<string,unknown>) => c['platform']==='bling').length;
+  const catalogWms   = catalogItems.filter((c:Record<string,unknown>) => c['platform']==='wms').length;
+  const catalogSynced = catalogBling > 0 || catalogWms > 0;
 
   const tokenExpiry = token ? new Date(token.expires_at) : null;
   const tokenValid  = tokenExpiry ? tokenExpiry > now : false;
@@ -112,14 +117,28 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
           <button onclick="deleteMap('${m['id']}')" style="background:#7f1d1d;color:#fca5a5;border:none;border-radius:4px;padding:3px 8px;font-size:.68rem;cursor:pointer">🗑</button>
         </td></tr>`).join('');
 
+  const methodBadge = (mth:string) => {
+    const map:Record<string,[string,string,string]> = {
+      barcode:['#4c1d95','#c4b5fd','🔖 Barcode'],
+      exact_code:['#1e3a5f','#93c5fd','# Código'],
+      fuzzy_name:['#78350f','#fde68a','~ Nome'],
+      manual:['#1e293b','#64748b','✎ Manual'],
+    };
+    const [bg,fg,lbl] = map[mth]??['#1e293b','#64748b',mth];
+    return `<span style="background:${bg};color:${fg};padding:2px 8px;border-radius:99px;font-size:.65rem;font-weight:600;white-space:nowrap">${lbl}</span>`;
+  };
+
   const pendingMapTable = pendingMaps.length===0
-    ? `<tr><td colspan="7" style="text-align:center;color:#475569;padding:28px;font-style:italic">Nenhum mapeamento pendente. O auto-scan popula esta lista quando produtos desconhecidos chegam via webhook.</td></tr>`
+    ? `<tr><td colspan="10" style="text-align:center;color:#475569;padding:28px;font-style:italic">Nenhum mapeamento pendente. Clique em "Sincronizar Catálogo" para importar produtos e gerar sugestões automáticas por código de barras.</td></tr>`
     : pendingMaps.map((m:Record<string,unknown>)=>`<tr>
         <td style="font-family:monospace">${m['wms_code']}</td>
-        <td style="font-size:.73rem;color:#94a3b8">${m['wms_product_name']??'—'}</td>
+        <td style="font-size:.73rem;color:#e2e8f0">${m['wms_product_name']??'—'}</td>
+        <td style="font-family:monospace;font-size:.72rem;color:#a78bfa">${m['wms_barcode']??'—'}</td>
         <td style="font-family:monospace">${m['bling_sku']??'—'}</td>
         <td style="font-size:.73rem;color:#94a3b8">${m['bling_product_name']??'—'}</td>
+        <td style="font-family:monospace;font-size:.72rem;color:#60a5fa">${m['bling_barcode']??'—'}</td>
         <td style="text-align:center">${confBadge(m['confidence'] as number)}</td>
+        <td>${methodBadge(m['match_method'] as string)}</td>
         <td>${m['status']==='pending'?`<span style="background:#78350f;color:#fde68a;padding:2px 8px;border-radius:99px;font-size:.68rem;font-weight:600">Pendente</span>`:m['status']==='approved'?`<span style="background:#14532d;color:#86efac;padding:2px 8px;border-radius:99px;font-size:.68rem;font-weight:600">Aprovado</span>`:`<span style="background:#7f1d1d;color:#fca5a5;padding:2px 8px;border-radius:99px;font-size:.68rem;font-weight:600">Rejeitado</span>`}</td>
         <td style="white-space:nowrap">
           ${m['status']==='pending'?`
@@ -364,11 +383,33 @@ label.lbl{display:block;font-size:.65rem;font-weight:700;color:#475569;text-tran
 
 <!-- ══════════════════════════ VIEW: AUTO-SCAN ═══ -->
 <div id="view-auto" class="view">
-  <div class="topbar"><div><div class="page-title">Auto-scan de Produtos</div><div class="page-sub">Sugestões automáticas de mapeamento por código e nome</div></div></div>
-  <div style="background:#1e3a5f;border:1px solid #2563eb;border-radius:8px;padding:12px 16px;margin-bottom:16px;font-size:.78rem;color:#93c5fd;line-height:1.6">
-    Quando um produto desconhecido chega via webhook, o sistema busca automaticamente no Bling por código exato e similaridade de nome. Sugestões com alta confiança (≥85%) aparecem aqui para aprovação rápida. Após aprovar, reprocesse o evento na aba <strong>DLQ</strong> ou <strong>Falhas</strong>.
+  <div class="topbar">
+    <div><div class="page-title">Auto-scan de Produtos</div><div class="page-sub">Matching automático por código de barras EAN/GTIN + similaridade de nome</div></div>
+    <button onclick="syncCatalog()" id="sync-btn" style="background:#7c3aed;color:#ede9fe;border:none;border-radius:6px;padding:8px 18px;font-size:.78rem;font-weight:700;cursor:pointer">⟳ Sincronizar Catálogo</button>
   </div>
-  ${SEC('Mapeamentos Pendentes de Aprovação',`${pendingCount} pendentes`,`<table>${TH('Código WMS','Nome WMS','SKU Bling sugerido','Nome Bling','Confiança','Status','Ações')}
+  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:14px">
+    <div style="background:#1e293b;border:1px solid #334155;border-radius:8px;padding:12px 16px">
+      <div style="font-size:.62rem;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px">Catálogo Bling</div>
+      <div style="font-size:1.5rem;font-weight:700;color:${catalogBling>0?'#a78bfa':'#475569'}">${catalogBling}</div>
+      <div style="font-size:.7rem;color:#64748b;margin-top:3px">produtos com cod. barras</div>
+    </div>
+    <div style="background:#1e293b;border:1px solid #334155;border-radius:8px;padding:12px 16px">
+      <div style="font-size:.62rem;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px">Catálogo WMS</div>
+      <div style="font-size:1.5rem;font-weight:700;color:${catalogWms>0?'#60a5fa':'#475569'}">${catalogWms}</div>
+      <div style="font-size:.7rem;color:#64748b;margin-top:3px">produtos com cod. barras</div>
+    </div>
+    <div style="background:${catalogSynced?'#14532d':'#450a0a'};border:1px solid ${catalogSynced?'#166534':'#7f1d1d'};border-radius:8px;padding:12px 16px">
+      <div style="font-size:.62rem;font-weight:700;color:${catalogSynced?'#4ade80':'#ef4444'};text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px">Status Catálogo</div>
+      <div style="font-size:1rem;font-weight:700;color:${catalogSynced?'#86efac':'#fca5a5'}">${catalogSynced?'Sincronizado':'Não sincronizado'}</div>
+      <div style="font-size:.7rem;color:${catalogSynced?'#4ade80':'#f87171'};margin-top:3px">${catalogSynced?'Matching por barcode ativo':'Clique em "Sincronizar Catálogo"'}</div>
+    </div>
+  </div>
+  <div style="background:#1e3a5f;border:1px solid #2563eb;border-radius:8px;padding:12px 16px;margin-bottom:14px;font-size:.78rem;color:#93c5fd;line-height:1.7">
+    <strong>Como funciona:</strong> Clique em <em>Sincronizar Catálogo</em> para puxar todos os produtos do Bling e do WMS com seus códigos de barras EAN/GTIN. O sistema vincula automaticamente produtos com o mesmo código de barras (confiança 100%) e sugere os demais por similaridade de nome. Após sincronizar, todos os eventos futuros usam o catálogo local para matching instantâneo.<br>
+    <strong>Nome do produto:</strong> usa o nome do WMS quando disponível; caso contrário, usa o nome do Bling.
+  </div>
+  <div id="sync-result" style="display:none;background:#1e293b;border:1px solid #334155;border-radius:8px;padding:12px 16px;margin-bottom:14px;font-size:.78rem;color:#94a3b8"></div>
+  ${SEC('Mapeamentos Pendentes de Aprovação',`${pendingCount} pendentes`,`<table>${TH('Código WMS','Nome WMS','Cod. Barras WMS','SKU Bling','Nome Bling','Cod. Barras Bling','Confiança','Método','Status','Ações')}
     <tbody>${pendingMapTable}</tbody></table>`)}
   <div id="auto-msg" style="margin-top:10px;font-size:.78rem;display:none"></div>
 </div>
@@ -488,6 +529,35 @@ async function rejectPending(id) {
   if (!confirm('Rejeitar esta sugestão?')) return;
   const r=await fetch('/api/admin/pending-mappings',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'include',body:JSON.stringify({id,action:'reject'})});
   if (r.ok) location.reload(); else alert('Erro ao rejeitar');
+}
+
+async function syncCatalog() {
+  const btn=document.getElementById('sync-btn');
+  const res=document.getElementById('sync-result');
+  if(btn){btn.disabled=true;btn.textContent='⟳ Sincronizando...';}
+  if(res){res.style.display='none';}
+  try {
+    const r=await fetch('/api/admin/mappings',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'include',body:JSON.stringify({action:'sync-catalog'})});
+    const d=await r.json();
+    if(r.ok&&d.sucesso){
+      if(res){
+        res.style.display='block';
+        res.innerHTML=`<span style="color:#86efac;font-weight:700">✓ Sincronização concluída!</span><br>
+          Bling: <strong>${d.bling_synced}</strong> produtos &nbsp;·&nbsp;
+          WMS: <strong>${d.wms_synced}</strong> produtos &nbsp;·&nbsp;
+          Auto-mapeados por barcode: <strong style="color:#c4b5fd">${d.auto_mapped}</strong> &nbsp;·&nbsp;
+          Sugestões criadas: <strong style="color:#fde68a">${d.pending_created}</strong> &nbsp;·&nbsp;
+          Duração: ${Math.round(d.duration_ms/1000)}s`;
+      }
+      setTimeout(()=>location.reload(),2500);
+    } else {
+      if(res){res.style.display='block';res.style.color='#ef4444';res.textContent='Erro: '+(d.erro??'Falha desconhecida');}
+    }
+  } catch(e) {
+    if(res){res.style.display='block';res.style.color='#ef4444';res.textContent='Erro de rede: '+e;}
+  } finally {
+    if(btn){btn.disabled=false;btn.textContent='⟳ Sincronizar Catálogo';}
+  }
 }
 
 function showMsg(el,text,color) { el.style.display='block'; el.style.color=color; el.textContent=text; }

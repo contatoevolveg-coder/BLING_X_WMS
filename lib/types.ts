@@ -93,6 +93,8 @@ export interface ProductMapping {
   wms_code: string;
   bling_sku: string;
   bling_product_id: number;
+  barcode: string | null;
+  display_name: string | null;
   active: boolean;
   created_at: string;
   updated_at: string;
@@ -120,11 +122,13 @@ export interface PendingMapping {
   id: string;
   wms_code: string;
   wms_product_name: string | null;
+  wms_barcode: string | null;
   bling_sku: string | null;
   bling_product_id: number | null;
   bling_product_name: string | null;
+  bling_barcode: string | null;
   confidence: number;
-  match_method: 'exact_code' | 'fuzzy_name' | 'manual';
+  match_method: 'barcode' | 'exact_code' | 'fuzzy_name' | 'manual';
   status: 'pending' | 'approved' | 'rejected';
   notes: string | null;
   created_at: string;
@@ -161,7 +165,37 @@ export interface WMSCreateExpeditionPayload {
 export interface WMSStockItem {
   codigoProduto: string;
   descricao: string;
+  codigoBarras?: string;
+  ean?: string;
+  gtin?: string;
   saldoDisponivel: number;
   saldoReservado: number;
   saldoFisico: number;
+}
+
+export interface WMSCatalogProduct {
+  codigoProduto: string;
+  descricao: string;
+  codigoBarras?: string;
+  ean?: string;
+  gtin?: string;
+  codBarras?: string;
+}
+
+export interface ProductCatalogItem {
+  id: string;
+  platform: 'bling' | 'wms';
+  platform_id: string;
+  code: string;
+  name: string;
+  barcode: string | null;
+  synced_at: string;
+}
+
+export interface SyncCatalogResult {
+  bling_synced: number;
+  wms_synced: number;
+  auto_mapped: number;
+  pending_created: number;
+  duration_ms: number;
 }

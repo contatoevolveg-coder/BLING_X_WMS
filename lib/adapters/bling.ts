@@ -170,15 +170,30 @@ export async function listStockBalances(depositoId: number): Promise<
 }
 
 /**
- * Lists Bling products (used for mapping seeding).
+ * Lists one page of Bling products. Includes gtin (EAN barcode) when available.
  */
 export async function listProducts(
   page = 1
-): Promise<Array<{ id: number; nome: string; codigo: string }>> {
+): Promise<Array<{ id: number; nome: string; codigo: string; gtin?: string }>> {
   const res = await blingRequest<{
-    data: Array<{ id: number; nome: string; codigo: string }>;
+    data: Array<{ id: number; nome: string; codigo: string; gtin?: string }>;
   }>('GET', `/produtos?pagina=${page}&limite=100`);
   return res.data ?? [];
+}
+
+/**
+ * Fetches ALL Bling products across all pages — used for catalog sync.
+ */
+export async function listAllProducts(): Promise<Array<{ id: number; nome: string; codigo: string; gtin?: string }>> {
+  const all: Array<{ id: number; nome: string; codigo: string; gtin?: string }> = [];
+  let page = 1;
+  for (;;) {
+    const items = await listProducts(page);
+    all.push(...items);
+    if (items.length < 100) break;
+    page++;
+  }
+  return all;
 }
 
 /**
@@ -187,10 +202,10 @@ export async function listProducts(
  */
 export async function searchProductsByCode(
   code: string
-): Promise<Array<{ id: number; nome: string; codigo: string }>> {
+): Promise<Array<{ id: number; nome: string; codigo: string; gtin?: string }>> {
   try {
     const res = await blingRequest<{
-      data?: Array<{ id: number; nome: string; codigo: string }>;
+      data?: Array<{ id: number; nome: string; codigo: string; gtin?: string }>;
     }>('GET', `/produtos?criterio=2&tipo=T&pagina=1&limite=10&codigo=${encodeURIComponent(code)}`);
     return res.data ?? [];
   } catch {
