@@ -432,7 +432,7 @@ label.lbl{display:block;font-size:.65rem;font-weight:700;color:#475569;text-tran
     <div style="background:#1e293b;border:1px solid ${wmsConfigured?'#334155':'#7f1d1d'};border-radius:8px;padding:12px 16px">
       <div style="font-size:.62rem;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px">Catálogo WMS</div>
       <div style="font-size:1.5rem;font-weight:700;color:${catalogWms>0?'#60a5fa':wmsConfigured?'#475569':'#ef4444'}">${wmsConfigured?catalogWms:'N/C'}</div>
-      <div style="font-size:.7rem;color:${wmsConfigured?'#64748b':'#ef4444'};margin-top:3px">${wmsConfigured?`${wmsWithBarcode} com cod. barras`:'configurar credenciais'}</div>
+      <div style="font-size:.7rem;color:${wmsConfigured?'#64748b':'#ef4444'};margin-top:3px">${wmsConfigured?`${wmsWithBarcode} com cod. barras · <span style="color:#fde68a">import manual</span>`:'configurar credenciais'}</div>
     </div>
     <div style="background:${blingWithBarcode>0||wmsWithBarcode>0?'#1e3a5f':'#1e293b'};border:1px solid ${blingWithBarcode>0||wmsWithBarcode>0?'#2563eb':'#334155'};border-radius:8px;padding:12px 16px">
       <div style="font-size:.62rem;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px">Match Barcode</div>
@@ -625,11 +625,17 @@ async function syncCatalog() {
     if(r.ok&&d.sucesso){
       if(res){
         res.style.display='block';
+        const wmsApi = d.wms_synced > 0
+          ? ' WMS (API): <strong>'+d.wms_synced+'</strong>'
+          : ' WMS (API): <strong style="color:#fca5a5">0 — API inacessível</strong>';
+        const wmsCat = d.wms_in_catalog > 0
+          ? ' &nbsp;<span style="color:#60a5fa;font-size:.75rem">('+d.wms_in_catalog+' no catálogo via import manual)</span>'
+          : '';
         res.innerHTML='<span style="color:#86efac;font-weight:700">&#10003; Sincronização concluída!</span><br>'
           +' Bling: <strong>'+d.bling_synced+'</strong> produtos &nbsp;&middot;&nbsp;'
-          +' WMS: <strong>'+d.wms_synced+'</strong> produtos &nbsp;&middot;&nbsp;'
-          +' Auto-mapeados por barcode: <strong style="color:#c4b5fd">'+d.auto_mapped+'</strong> &nbsp;&middot;&nbsp;'
-          +' Sugestões criadas: <strong style="color:#fde68a">'+d.pending_created+'</strong> &nbsp;&middot;&nbsp;'
+          +wmsApi+wmsCat+' &nbsp;&middot;&nbsp;'
+          +' Auto-mapeados: <strong style="color:#c4b5fd">'+d.auto_mapped+'</strong> &nbsp;&middot;&nbsp;'
+          +' Sugestões: <strong style="color:#fde68a">'+d.pending_created+'</strong> &nbsp;&middot;&nbsp;'
           +' Duração: '+Math.round(d.duration_ms/1000)+'s';
       }
       setTimeout(()=>location.reload(),2500);

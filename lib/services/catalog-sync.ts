@@ -212,6 +212,7 @@ export async function syncProductCatalog(): Promise<SyncCatalogResult> {
   const result: SyncCatalogResult = {
     bling_synced: blingProducts.length,
     wms_synced: wmsProducts.length,
+    wms_in_catalog: (wmsCatalog ?? []).length,
     auto_mapped: autoMapped,
     pending_created: pendingCreated,
     duration_ms: Date.now() - t0,

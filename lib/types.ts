@@ -195,6 +195,7 @@ export interface ProductCatalogItem {
 export interface SyncCatalogResult {
   bling_synced: number;
   wms_synced: number;
+  wms_in_catalog: number;
   auto_mapped: number;
   pending_created: number;
   duration_ms: number;
