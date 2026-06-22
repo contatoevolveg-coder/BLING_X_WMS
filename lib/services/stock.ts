@@ -1,6 +1,7 @@
 import { getSupabase } from '../supabase';
 import { logger } from '../logger';
 import { deductStock, getOrderById } from '../adapters/bling';
+import { getSetting } from '../settings';
 import { createExpeditionByProducts } from '../adapters/wms';
 import { markQuarantine } from './queue';
 import { tryAutoMap } from './auto-map';
@@ -204,8 +205,7 @@ export async function processExpedition(event: WebhookEvent): Promise<void> {
     );
   }
 
-  const depositante = process.env['WMS_DOC_DEPOSITANTE'];
-  if (!depositante) throw new Error('Variável de ambiente WMS_DOC_DEPOSITANTE não encontrada');
+  const depositante = await getSetting('WMS_DOC_DEPOSITANTE');
 
   const db = getSupabase();
   const wmsProducts: WMSExpeditionProduct[] = [];
