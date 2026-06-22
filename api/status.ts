@@ -45,8 +45,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
   const mappedBlingIds  = new Set(mappings.filter((m:Record<string,unknown>) => m['active']).map((m:Record<string,unknown>) => String(m['bling_product_id'])));
   const prodBlingCount  = allProducts.filter(p => p.platform === 'bling').length;
   const prodWmsCount    = allProducts.filter(p => p.platform === 'wms').length;
-  const prodMappedCount = allProducts.filter(p => p.platform === 'wms' ? mappedWmsCodes.has(p.code) : mappedBlingIds.has(p.platform_id)).length;
-  const prodUnmappedCount = allProducts.length - prodMappedCount;
+  // Conta mapeamentos ativos (não o dobro de produtos de ambos os lados)
+  const prodMappedCount = mappings.filter((m:Record<string,unknown>) => m['active']).length;
+  const prodUnmappedCount = prodWmsCount - prodMappedCount;
 
   const tokenExpiry = token ? new Date(token.expires_at) : null;
   const tokenValid  = tokenExpiry ? tokenExpiry > now : false;
@@ -429,15 +430,15 @@ label.lbl{display:block;font-size:.65rem;font-weight:700;color:#475569;text-tran
       <div style="font-size:1.5rem;font-weight:700;color:${catalogBling>0?'#a78bfa':'#475569'}">${catalogBling}</div>
       <div style="font-size:.7rem;color:#64748b;margin-top:3px">${blingWithBarcode} com cod. barras</div>
     </div>
-    <div style="background:#1e293b;border:1px solid ${wmsConfigured?'#334155':'#7f1d1d'};border-radius:8px;padding:12px 16px">
+    <div style="background:#1e293b;border:1px solid ${catalogWms>0?'#334155':'#7f1d1d'};border-radius:8px;padding:12px 16px">
       <div style="font-size:.62rem;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px">Catálogo WMS</div>
-      <div style="font-size:1.5rem;font-weight:700;color:${catalogWms>0?'#60a5fa':wmsConfigured?'#475569':'#ef4444'}">${wmsConfigured?catalogWms:'N/C'}</div>
-      <div style="font-size:.7rem;color:${wmsConfigured?'#64748b':'#ef4444'};margin-top:3px">${wmsConfigured?`${wmsWithBarcode} com cod. barras · <span style="color:#fde68a">import manual</span>`:'configurar credenciais'}</div>
+      <div style="font-size:1.5rem;font-weight:700;color:${catalogWms>0?'#60a5fa':'#475569'}">${catalogWms}</div>
+      <div style="font-size:.7rem;color:#64748b;margin-top:3px">${wmsWithBarcode} com barcode · <span style="color:#fde68a">import manual</span>${!wmsConfigured?` · <span style="color:#94a3b8">API: N/C</span>`:''}</div>
     </div>
     <div style="background:${blingWithBarcode>0||wmsWithBarcode>0?'#1e3a5f':'#1e293b'};border:1px solid ${blingWithBarcode>0||wmsWithBarcode>0?'#2563eb':'#334155'};border-radius:8px;padding:12px 16px">
-      <div style="font-size:.62rem;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px">Match Barcode</div>
+      <div style="font-size:.62rem;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px">Com Barcode</div>
       <div style="font-size:1.5rem;font-weight:700;color:${blingWithBarcode>0||wmsWithBarcode>0?'#93c5fd':'#475569'}">${blingWithBarcode+wmsWithBarcode}</div>
-      <div style="font-size:.7rem;color:#64748b;margin-top:3px">produtos com barcode</div>
+      <div style="font-size:.7rem;color:#64748b;margin-top:3px">Bling: ${blingWithBarcode} · WMS: ${wmsWithBarcode}</div>
     </div>
     <div style="background:${catalogSynced?'#14532d':'#450a0a'};border:1px solid ${catalogSynced?'#166534':'#7f1d1d'};border-radius:8px;padding:12px 16px">
       <div style="font-size:.62rem;font-weight:700;color:${catalogSynced?'#4ade80':'#ef4444'};text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px">Status</div>
@@ -476,10 +477,10 @@ label.lbl{display:block;font-size:.65rem;font-weight:700;color:#475569;text-tran
     <div><div class="page-title">Catálogo de Produtos</div><div class="page-sub">${allProducts.length} produtos · ${prodBlingCount} Bling · ${prodWmsCount} WMS</div></div>
   </div>
   <div class="metrics">
-    ${CARD('Catálogo Bling', prodBlingCount, 'produtos sincronizados', '#a78bfa')}
-    ${CARD('Catálogo WMS', prodWmsCount, 'produtos sincronizados', '#60a5fa')}
-    ${CARD('Mapeados', prodMappedCount, 'com mapeamento ativo', '#86efac')}
-    ${CARD('Sem mapeamento', prodUnmappedCount, 'aguardando mapeamento', prodUnmappedCount > 0 ? '#fde68a' : '#86efac')}
+    ${CARD('Catálogo Bling', prodBlingCount, 'produtos no Bling', '#a78bfa')}
+    ${CARD('Catálogo WMS', prodWmsCount, 'produtos (import manual)', '#60a5fa')}
+    ${CARD('Mapeamentos Ativos', prodMappedCount, 'pares WMS↔Bling', '#86efac')}
+    ${CARD('WMS sem mapeamento', prodUnmappedCount, 'aguardando mapeamento', prodUnmappedCount > 0 ? '#fde68a' : '#86efac')}
   </div>
   <div style="background:#1e293b;border:1px solid #334155;border-radius:10px;overflow:hidden">
     <div class="filter-row">
