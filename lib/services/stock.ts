@@ -15,15 +15,12 @@ import type {
 // Valores de situacaoId do Bling que acionam uma expedição no WMS (Atendido=9, Em andamento=15)
 const BLING_DISPATCH_STATUSES = new Set([9, 15]);
 
-/**
- * Obtém o ID do depósito padrão do Bling a partir das variáveis de ambiente.
- * Comunica-se com o contexto da aplicação (process.env).
- * @returns {number} O ID do depósito.
- */
-function getBlingDepositoId(): number {
-  const raw = process.env['BLING_DEPOSITO_ID'];
-  const id = parseInt(raw ?? '', 10);
-  if (!id) throw new Error('Missing or invalid BLING_DEPOSITO_ID env var');
+async function getBlingDepositoId(): Promise<number> {
+  const raw = await getSetting('BLING_DEPOSITO_ID').catch(
+    () => process.env['BLING_DEPOSITO_ID'] ?? ''
+  );
+  const id = parseInt(raw, 10);
+  if (!id) throw new Error('Missing or invalid BLING_DEPOSITO_ID (configure em system_settings ou env var)');
   return id;
 }
 
@@ -53,10 +50,9 @@ export async function processBaixa(event: WebhookEvent): Promise<void> {
   const produtos = payload.metadata.produtos;
   const codigoInterno = payload.metadata.codigoInterno;
   const db = getSupabase();
-  const depositoId = getBlingDepositoId();
-
+  const depositoId = await getBlingDepositoId();
   const wmsCodes = produtos.map((p) => p.codigoProduto);
-  
+
   // Evita erro na query do Supabase caso o array venha vazio
   if (wmsCodes.length === 0) {
     logger.warn('stock-service', 'Expedição sem produtos', { codigoInterno });
