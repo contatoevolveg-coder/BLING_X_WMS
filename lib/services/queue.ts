@@ -1,5 +1,6 @@
 import { getSupabase } from '../supabase';
 import { logger } from '../logger';
+import { sendAlert } from '../alerts';
 import type { WebhookEvent, WebhookSource } from '../types';
 
 const MAX_RETRIES = 3;
@@ -88,11 +89,19 @@ export async function markFailed(
   const newRetryCount = currentRetryCount + 1;
   const newStatus = newRetryCount >= MAX_RETRIES ? 'dlq' : 'failed';
 
+  // Backoff exponencial manual (minutos)
+  let backoffMinutes = 1;
+  if (newRetryCount === 2) backoffMinutes = 5;
+  if (newRetryCount === 3) backoffMinutes = 15;
+  
+  const nextRetryAt = new Date(Date.now() + backoffMinutes * 60 * 1000).toISOString();
+
   const { error } = await db
     .from('webhook_events')
     .update({
       status: newStatus,
       retry_count: newRetryCount,
+      next_retry_at: nextRetryAt,
       error: errorMessage.slice(0, 2000), // guard against oversized error strings
     })
     .eq('id', id);
@@ -125,5 +134,13 @@ export async function markQuarantine(
 
   if (error) throw new Error(`markQuarantine failed: ${error.message}`);
   logger.warn('queue', `Event ${id} quarantined`, { reason });
+  
+  // Alerta proativo no Discord/Slack
+  await sendAlert(
+    '🛑 Pedido na Quarentena (Auto-Map Falhou)',
+    `O evento **${id}** foi parado e precisa de intervenção manual.\n\n**Motivo:** ${reason}`,
+    'warn'
+  ).catch(err => logger.error('queue', 'Falha ao enviar alerta de quarentena', { erro: String(err) }));
+
   throw new QuarantineError(reason);
 }

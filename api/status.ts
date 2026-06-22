@@ -11,7 +11,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
   const db = getSupabase();
   const now = new Date();
 
-  const [tokenRes, eventsRes, mappingsRes, pendingMapsRes, snapshotsRes, baixasRes, settingsRes, catalogRes] =
+  const [tokenRes, eventsRes, mappingsRes, pendingMapsRes, snapshotsRes, baixasRes, settingsRes, catalogRes, allCatalogRes] =
     await Promise.all([
       db.from('bling_tokens').select('expires_at, updated_at, scope').eq('singleton_key', 'default').single(),
       db.from('webhook_events').select('*').order('created_at', { ascending: false }).limit(200),
@@ -21,6 +21,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
       db.from('processed_baixas').select('*').order('created_at', { ascending: false }).limit(100),
       db.from('system_settings').select('*'),
       db.from('product_catalog').select('platform, barcode'),
+      db.from('product_catalog').select('platform, platform_id, code, name, barcode').order('platform').order('code').limit(1000),
     ]);
 
   const token     = tokenRes.data;
@@ -37,6 +38,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
   const wmsWithBarcode  = catalogItems.filter((c:Record<string,unknown>) => c['platform']==='wms'   && c['barcode']).length;
   const catalogSynced   = catalogBling > 0 || catalogWms > 0;
   const wmsConfigured   = settings.some((s:Record<string,unknown>) => s['key']==='WMS_API_KEY') || !!process.env['WMS_API_KEY'];
+
+  type CatalogProduct = { platform: string; platform_id: string; code: string; name: string; barcode: string | null };
+  const allProducts = (allCatalogRes.data ?? []) as CatalogProduct[];
+  const mappedWmsCodes  = new Set(mappings.filter((m:Record<string,unknown>) => m['active']).map((m:Record<string,unknown>) => m['wms_code'] as string));
+  const mappedBlingIds  = new Set(mappings.filter((m:Record<string,unknown>) => m['active']).map((m:Record<string,unknown>) => String(m['bling_product_id'])));
+  const prodBlingCount  = allProducts.filter(p => p.platform === 'bling').length;
+  const prodWmsCount    = allProducts.filter(p => p.platform === 'wms').length;
+  const prodMappedCount = allProducts.filter(p => p.platform === 'wms' ? mappedWmsCodes.has(p.code) : mappedBlingIds.has(p.platform_id)).length;
+  const prodUnmappedCount = allProducts.length - prodMappedCount;
 
   const tokenExpiry = token ? new Date(token.expires_at) : null;
   const tokenValid  = tokenExpiry ? tokenExpiry > now : false;
@@ -182,6 +192,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
   const TH = (...cols:string[]) =>
     `<thead><tr>${cols.map(c=>`<th style="text-align:left;font-size:.65rem;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.06em;padding:8px 14px;border-bottom:1px solid #334155">${c}</th>`).join('')}</tr></thead>`;
 
+  const prodRows = allProducts.length === 0
+    ? `<tr><td colspan="5" style="text-align:center;color:#475569;padding:28px;font-style:italic">Nenhum produto no catálogo. Clique em "Sincronizar Catálogo" no Auto-scan.</td></tr>`
+    : allProducts.map(p => {
+        const isMapped = p.platform === 'wms' ? mappedWmsCodes.has(p.code) : mappedBlingIds.has(p.platform_id);
+        const platTag = p.platform === 'bling'
+          ? `<span style="background:#1a1e3a;color:#a78bfa;padding:2px 8px;border-radius:4px;font-size:.68rem;font-weight:600">BLING</span>`
+          : `<span style="background:#1e3a5f;color:#60a5fa;padding:2px 8px;border-radius:4px;font-size:.68rem;font-weight:600">WMS</span>`;
+        const mapBadge = isMapped
+          ? `<span style="background:#14532d;color:#86efac;padding:2px 9px;border-radius:99px;font-size:.68rem;font-weight:600">Mapeado</span>`
+          : `<span style="background:#7f1d1d;color:#fca5a5;padding:2px 9px;border-radius:99px;font-size:.68rem;font-weight:600">Sem mapeamento</span>`;
+        const sk = (p.code + ' ' + p.name).toLowerCase().replace(/"/g, '');
+        return `<tr class="prod-row" data-platform="${p.platform}" data-mapped="${isMapped ? 'mapped' : 'unmapped'}" data-search="${sk}">
+          <td>${platTag}</td>
+          <td style="font-family:monospace">${p.code}</td>
+          <td style="font-size:.78rem">${p.name}</td>
+          <td style="font-family:monospace;font-size:.72rem;color:#94a3b8">${p.barcode ?? '—'}</td>
+          <td>${mapBadge}</td></tr>`;
+      }).join('');
+
   const html = `<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -259,6 +288,7 @@ label.lbl{display:block;font-size:.65rem;font-weight:700;color:#475569;text-tran
   <div class="nav-item" onclick="showView('mappings',this)">🔗 Mapeamentos</div>
   <div class="nav-item" onclick="showView('auto',this)">🤖 Auto-scan ${pendingCount>0?`<span class="nav-badge-w">${pendingCount}</span>`:''}
   </div>
+  <div class="nav-item" onclick="showView('products',this)">🛍 Produtos <span style="margin-left:auto;background:#1e3a5f;color:#93c5fd;font-size:.6rem;padding:1px 6px;border-radius:9px;font-weight:600">${allProducts.length}</span></div>
 
   <div class="nav-group">Sistema</div>
   <div class="nav-item" onclick="showView('config',this)">⚙️ Configurações</div>
@@ -440,6 +470,36 @@ label.lbl{display:block;font-size:.65rem;font-weight:700;color:#475569;text-tran
     <tbody>${baixas.length?baixas.map((b:Record<string,unknown>)=>`<tr><td style="font-family:monospace">${b['wms_code']}</td><td style="font-family:monospace;font-size:.73rem">${b['event_id']}</td><td style="font-size:.73rem">${fmt(b['created_at'] as string)}</td></tr>`).join(''):`<tr><td colspan="3" style="text-align:center;color:#475569;padding:28px;font-style:italic">Nenhuma baixa ainda</td></tr>`}</tbody></table>`)}
 </div>
 
+<!-- ══════════════════════════ VIEW: PRODUTOS ═══ -->
+<div id="view-products" class="view">
+  <div class="topbar">
+    <div><div class="page-title">Catálogo de Produtos</div><div class="page-sub">${allProducts.length} produtos · ${prodBlingCount} Bling · ${prodWmsCount} WMS</div></div>
+  </div>
+  <div class="metrics">
+    ${CARD('Catálogo Bling', prodBlingCount, 'produtos sincronizados', '#a78bfa')}
+    ${CARD('Catálogo WMS', prodWmsCount, 'produtos sincronizados', '#60a5fa')}
+    ${CARD('Mapeados', prodMappedCount, 'com mapeamento ativo', '#86efac')}
+    ${CARD('Sem mapeamento', prodUnmappedCount, 'aguardando mapeamento', prodUnmappedCount > 0 ? '#fde68a' : '#86efac')}
+  </div>
+  <div style="background:#1e293b;border:1px solid #334155;border-radius:10px;overflow:hidden">
+    <div class="filter-row">
+      <span style="font-size:.72rem;color:#64748b">Plataforma:</span>
+      <button class="filter-btn on" onclick="fprod_plat(this,'all')">Todos</button>
+      <button class="filter-btn" onclick="fprod_plat(this,'bling')">Bling</button>
+      <button class="filter-btn" onclick="fprod_plat(this,'wms')">WMS</button>
+      &nbsp;
+      <span style="font-size:.72rem;color:#64748b">Status:</span>
+      <button class="filter-btn on" onclick="fprod_map(this,'all')">Todos</button>
+      <button class="filter-btn" onclick="fprod_map(this,'mapped')">Mapeados</button>
+      <button class="filter-btn" onclick="fprod_map(this,'unmapped')">Sem mapeamento</button>
+      &nbsp;
+      <input id="prod-search" class="inp" style="width:200px" placeholder="Buscar código ou nome..." oninput="filterProds()">
+    </div>
+    <table id="prod-table">${TH('Plataforma','Código','Nome','Cod. Barras','Mapeamento')}
+    <tbody>${prodRows}</tbody></table>
+  </div>
+</div>
+
 <!-- ══════════════════════════ VIEW: CONFIG ═══ -->
 <div id="view-config" class="view">
   <div class="topbar"><div><div class="page-title">Configurações</div><div class="page-sub">Variáveis e endpoints do sistema</div></div></div>
@@ -602,7 +662,27 @@ async function saveWmsConfig() {
 
 function showMsg(el,text,color) { el.style.display='block'; el.style.color=color; el.textContent=text; }
 
-const hashViews = {dashboard:0,events:1,queue:2,failures:3,dlq:4,stock:5,mappings:6,auto:7,config:8,baixas:9};
+let activeProdPlat = 'all', activeProdMap = 'all';
+function fprod_plat(btn, val) {
+  document.querySelectorAll('.filter-btn').forEach(b=>{ if(b.onclick&&b.onclick.toString().includes('fprod_plat')) b.classList.remove('on'); });
+  btn.classList.add('on'); activeProdPlat=val; filterProds();
+}
+function fprod_map(btn, val) {
+  document.querySelectorAll('.filter-btn').forEach(b=>{ if(b.onclick&&b.onclick.toString().includes('fprod_map')) b.classList.remove('on'); });
+  btn.classList.add('on'); activeProdMap=val; filterProds();
+}
+function filterProds() {
+  const search=(document.getElementById('prod-search')?.value??'').toLowerCase();
+  document.querySelectorAll('#prod-table tbody tr.prod-row').forEach(row=>{
+    const p=row.dataset.platform, m=row.dataset.mapped, s=row.dataset.search??'';
+    const okP=activeProdPlat==='all'||p===activeProdPlat;
+    const okM=activeProdMap==='all'||m===activeProdMap;
+    const okS=!search||s.includes(search);
+    row.style.display=okP&&okM&&okS?'':'none';
+  });
+}
+
+const hashViews = {dashboard:0,events:1,queue:2,failures:3,dlq:4,stock:5,mappings:6,auto:7,products:8,config:9,baixas:10};
 const navItems = document.querySelectorAll('.nav-item');
 const h = location.hash.replace('#','');
 if (hashViews[h]!==undefined) {
