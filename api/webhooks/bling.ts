@@ -1,11 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { timingSafeEqual } from 'crypto';
 import { z } from 'zod';
-import { enqueue } from '../../lib/services/queue';
 import { logger } from '../../lib/logger';
-
-// situacaoId values that should trigger a WMS expedition
-const DISPATCH_STATUSES = new Set([9, 15]);
 
 // ── Zod schema ───────────────────────────────────────────────
 
@@ -87,32 +83,13 @@ export default async function handler(
 
   const payload = parsed.data;
   const pedido = payload.data;
-  const situacaoId = pedido.situacao?.id;
 
-  // Only enqueue dispatch-eligible status changes.
-  if (!situacaoId || !DISPATCH_STATUSES.has(situacaoId)) {
-    logger.info('bling-webhook', 'Ignorando pedido pois a situação não aciona expedição', { situacaoId });
-    res.status(200).json({ sucesso: true, acao: 'ignorado', situacao_id: situacaoId });
-    return;
-  }
-
-  // Idempotency key is scoped to pedido + situação so a second delivery
-  // of the same status change is treated as a duplicate.
-  const idempotencyKey = `bling-pedido-${pedido.id}-situacao-${situacaoId}`;
-
-  try {
-    const result = await enqueue(
-      'bling',
-      payload.event ?? 'PedidoVendaAtualizado',
-      idempotencyKey,
-      pedido
-    );
-
-    logger.info('bling-webhook', 'Evento enfileirado com sucesso', { event_id: result.id });
-
-    res.status(200).json({ sucesso: true, enfileirado: result.enqueued });
-  } catch (err) {
-    logger.error('bling-webhook', 'Falha no webhook', { error: String(err) });
-    res.status(200).json({ sucesso: false, erro: 'Erro interno' });
-  }
+  // WMS é somente leitura — não criamos expedições no WMS a partir de pedidos Bling.
+  // Apenas acusamos recebimento para o Bling não retentar entrega.
+  logger.info('bling-webhook', 'Evento recebido e acusado (WMS é leitura — sem enfileiramento)', {
+    pedido_id: pedido.id,
+    situacao_id: pedido.situacao?.id,
+    event: payload.event,
+  });
+  res.status(200).json({ sucesso: true, acao: 'acknowledged' });
 }

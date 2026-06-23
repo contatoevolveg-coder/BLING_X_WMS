@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { claimBatch, markDone, markFailed, QuarantineError } from '../../lib/services/queue';
-import { processBaixa, processExpedition } from '../../lib/services/stock';
+import { processBaixa } from '../../lib/services/stock';
 import { logger } from '../../lib/logger';
 import { sendAlert } from '../../lib/alerts';
 import type { WebhookEvent } from '../../lib/types';
@@ -96,7 +96,8 @@ async function route(event: WebhookEvent): Promise<void> {
       await processBaixa(event);
       break;
     case 'bling':
-      await processExpedition(event);
+      // WMS é somente leitura — eventos Bling não geram expedição; apenas acusamos recebimento
+      logger.info('process-queue', 'Evento Bling ignorado — WMS é leitura', { event_id: event.id });
       break;
     default:
       throw new Error(`Unknown event source: ${event.source}`);

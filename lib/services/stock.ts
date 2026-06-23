@@ -1,19 +1,13 @@
 import { getSupabase } from '../supabase';
 import { logger } from '../logger';
-import { deductStock, getOrderById } from '../adapters/bling';
+import { deductStock } from '../adapters/bling';
 import { getSetting } from '../settings';
-import { createExpeditionByProducts } from '../adapters/wms';
 import { markQuarantine } from './queue';
 import { tryAutoMap } from './auto-map';
 import type {
   WebhookEvent,
   WMSWebhookPayload,
-  BlingPedidoData,
-  WMSExpeditionProduct,
 } from '../types';
-
-// Valores de situacaoId do Bling que acionam uma expedição no WMS (Atendido=9, Em andamento=15)
-const BLING_DISPATCH_STATUSES = new Set([9, 15]);
 
 async function getBlingDepositoId(): Promise<number> {
   const raw = await getSetting('BLING_DEPOSITO_ID').catch(
@@ -162,128 +156,3 @@ export async function processBaixa(event: WebhookEvent): Promise<void> {
   });
 }
 
-// ── Flow B: Bling → WMS expedition ──────────────────────────
-
-/**
- * PROCESSAMENTO DE EXPEDIÇÃO (Bling -> WMS)
- * Comunicação: Recebe um evento do Bling (Pedido Atualizado) e cria uma ordem de expedição no WMS.
- * 
- * 1. Verifica se o status do pedido exige envio ao WMS.
- * 2. Consulta os mapeamentos no Supabase para traduzir IDs do Bling para Códigos do WMS.
- * 3. Se houver falha de mapeamento, o evento é quarentenado.
- * 4. Faz uma requisição à API do WMS (`createExpeditionByProducts`) para registrar a expedição.
- * 
- * @param event O evento de webhook recuperado do banco de dados.
- */
-export async function processExpedition(event: WebhookEvent): Promise<void> {
-  const pedido = event.payload as BlingPedidoData;
-  const situacaoId = pedido.situacao?.id;
-
-  // Ignora se a situação não faz parte daquelas que exigem separação/expedição
-  if (!situacaoId || !BLING_DISPATCH_STATUSES.has(situacaoId)) {
-    logger.info('stock-service', 'Evento do Bling ignorado — situação não aciona expedição', {
-      event_id: event.id,
-      pedido_id: pedido.id,
-      situacao_id: situacaoId,
-    });
-    return;
-  }
-
-  // Webhook only sends the order header — fetch full order if itens are missing
-  let itens = pedido.itens;
-  if (!itens?.length) {
-    const fullOrder = await getOrderById(pedido.id);
-    itens = fullOrder.itens;
-  }
-  if (!itens?.length) {
-    throw new Error(
-      `Pedido Bling ${pedido.id} não possui itens — impossível criar expedição`
-    );
-  }
-
-  const depositante = await getSetting('WMS_DOC_DEPOSITANTE');
-
-  const db = getSupabase();
-  const wmsProducts: WMSExpeditionProduct[] = [];
-
-  const blingProductIds = itens.map((item) => item.produto.id);
-
-  // Evita erro no Supabase caso array esteja vazio (apesar do check de length acima garantir)
-  if (blingProductIds.length === 0) return;
-
-  // Busca no Supabase os mapeamentos de todos os itens do pedido em uma única query
-  const { data: mappings, error: mappingError } = await db
-    .from('product_mappings')
-    .select('wms_code, bling_product_id')
-    .in('bling_product_id', blingProductIds)
-    .eq('active', true);
-
-  if (mappingError) {
-    throw new Error(`Falha ao buscar mapeamentos: ${mappingError.message}`);
-  }
-
-  const mappingsByBlingId = new Map(
-    mappings?.map((m) => [m.bling_product_id, m.wms_code as string])
-  );
-
-  // Valida e traduz os itens do pedido Bling para o formato exigido pelo WMS
-  for (const item of itens) {
-    let wmsCode = mappingsByBlingId.get(item.produto.id);
-
-    if (!wmsCode) {
-      const autoResult = await tryAutoMap(item.produto.codigo, item.produto.nome);
-      if (autoResult) {
-        // Auto-mapeou: busca o wms_code que foi criado
-        const { data: newMap } = await getSupabase()
-          .from('product_mappings')
-          .select('wms_code')
-          .eq('bling_product_id', item.produto.id)
-          .eq('active', true)
-          .single();
-        wmsCode = newMap?.wms_code as string | undefined;
-      }
-      if (!wmsCode) {
-        await markQuarantine(
-          event.id,
-          `Produto Bling ID ${item.produto.id} ("${item.produto.codigo}") sem mapeamento ` +
-            `(pedido ${pedido.id}). Sugestão salva em "Auto-scan" — reprocesse após aprovar.`
-        );
-        return;
-      }
-    }
-
-    wmsProducts.push({
-      codigoProduto: wmsCode,
-      quantidade: item.quantidade,
-    });
-  }
-
-  // Comunicação de Saída: Chama a API do WMS para criar a expedição
-  let result: { codigoInterno: string };
-  try {
-    result = await createExpeditionByProducts({
-      codigoExterno: `BLING-${pedido.id}`,
-      docDepositante: depositante,
-      produtos: wmsProducts,
-    });
-  } catch (err) {
-    const msg = String(err);
-    // WMS retorna 404 quando a conta não está configurada para expedições
-    if (msg.includes('404')) {
-      await markQuarantine(
-        event.id,
-        `WMS não aceitou a expedição (404) para pedido Bling ${pedido.id}. ` +
-        `Verifique se o depositante está habilitado para criar expedições no Smartgo. Erro: ${msg}`
-      );
-      return;
-    }
-    throw err;
-  }
-
-  logger.info('stock-service', 'Expedição criada no WMS com sucesso', {
-    event_id: event.id,
-    bling_pedido_id: pedido.id,
-    wms_codigoInterno: result.codigoInterno,
-    product_count: wmsProducts.length,
-  });
-}
