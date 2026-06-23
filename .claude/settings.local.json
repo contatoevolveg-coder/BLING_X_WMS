@@ -35,7 +35,27 @@
       "Bash(Start-Process -WindowStyle Hidden -FilePath \"cmd\" -ArgumentList \"/c npx vercel login --github > C:\\\\Users\\\\Micro\\\\Desktop\\\\vercel_auth.txt 2>&1\")",
       "Bash(echo \"started_pid:$!\")",
       "Bash(sleep 4 && cat /tmp/va.txt 2>/dev/null && cat \"C:/Users/Micro/Desktop/vercel_auth.txt\" 2>/dev/null || echo \"checking...\")",
-      "mcp__Claude_in_Chrome__read_network_requests"
+      "mcp__Claude_in_Chrome__read_network_requests",
+      "mcp__bf004177-0961-45c7-b46e-ca7e5d02cd10__get_project",
+      "mcp__bf004177-0961-45c7-b46e-ca7e5d02cd10__list_tables",
+      "mcp__bf004177-0961-45c7-b46e-ca7e5d02cd10__list_projects",
+      "mcp__bf004177-0961-45c7-b46e-ca7e5d02cd10__apply_migration",
+      "mcp__Claude_in_Chrome__read_page",
+      "PowerShell(Get-Content \"$env:APPDATA\\\\vercel\\\\auth.json\" -ErrorAction SilentlyContinue; Get-Content \"$env:USERPROFILE\\\\.vercel\\\\auth.json\" -ErrorAction SilentlyContinue)",
+      "PowerShell(Invoke-RestMethod -Uri \"https://api.vercel.com/v6/deployments?projectId=prj_DxB2wJCNpYsOePaGASYY6reHMRqy&teamId=team_4wYMJMxLuWii1FeKlLS5p6R5&limit=3\" -Method GET)",
+      "PowerShell($r = Invoke-WebRequest -Uri \"https://blingxwms-marketplace-s-projects1.vercel.app/api/auth/start\" -UseBasicParsing -ErrorAction SilentlyContinue; \"Status: $\\($r.StatusCode\\) - $\\($r.Content.Substring\\(0, [Math]::Min\\(200, $r.Content.Length\\)\\)\\)\")",
+      "mcp__bf004177-0961-45c7-b46e-ca7e5d02cd10__execute_sql",
+      "mcp__Claude_in_Chrome__computer",
+      "Bash(git push *)",
+      "Bash(curl -s -X POST \"https://blingxwms-marketplace-s-projects1.vercel.app/api/crons/refresh-token\" -H \"Authorization: Bearer ce419bfc77f6d6ce41ee70d2d6e36f8c453abf28de9ae198\" -H \"Content-Type: application/json\")",
+      "Bash(curl -s \"https://blingxwms-marketplace-s-projects1.vercel.app/api/status\")",
+      "Bash(python -c \"import sys; content = sys.stdin.read\\(\\); print\\(content[:500] if len\\(content\\) > 500 else content\\)\")",
+      "Bash(curl -s \"https://blingxwms-marketplace-s-projects1.vercel.app/api/health\")",
+      "Bash(curl -s \"https://blingxwms-marketplace-s-projects1.vercel.app/api/crons/refresh-token\" -H \"Authorization: Bearer ce419bfc77f6d6ce41ee70d2d6e36f8c453abf28de9ae198\")",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" \"https://blingx-2tceqjooe-marketplace-s-projects1.vercel.app/api/status\")",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" \"https://blingxwms-marketplace-s-projects1.vercel.app/api/status\")",
+      "mcp__visualize__read_me",
+      "mcp__visualize__show_widget"
     ]
   }
 }

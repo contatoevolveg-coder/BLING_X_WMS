@@ -27,9 +27,47 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     return;
   }
 
-  // POST — create mapping | requeue event | sync catalog
+  // POST — create mapping | requeue/resolve/delete event | sync catalog | clear failures
   if (req.method === 'POST') {
-    const body = req.body as { action?: string; id?: string; wms_code?: string; bling_sku?: string; bling_product_id?: number } | undefined;
+    const body = req.body as { action?: string; id?: string; status?: string; wms_code?: string; bling_sku?: string; bling_product_id?: number } | undefined;
+
+    // Resolve event (mark as done without reprocessing)
+    if (body?.action === 'resolve-event') {
+      const id = body.id;
+      if (!id) { res.status(400).json({ erro: 'Campo id obrigatório' }); return; }
+      const { data: ev, error: fetchErr } = await db.from('webhook_events').select('id,status').eq('id', id).single();
+      if (fetchErr || !ev) { res.status(404).json({ erro: 'Evento não encontrado' }); return; }
+      const { error } = await db.from('webhook_events')
+        .update({ status: 'done', processed_at: new Date().toISOString() }).eq('id', id);
+      if (error) { res.status(500).json({ erro: error.message }); return; }
+      res.status(200).json({ sucesso: true });
+      return;
+    }
+
+    // Delete single event permanently
+    if (body?.action === 'delete-event') {
+      const id = body.id;
+      if (!id) { res.status(400).json({ erro: 'Campo id obrigatório' }); return; }
+      const { error } = await db.from('webhook_events').delete().eq('id', id);
+      if (error) { res.status(500).json({ erro: error.message }); return; }
+      res.status(200).json({ sucesso: true });
+      return;
+    }
+
+    // Clear events in bulk by status
+    if (body?.action === 'clear-events') {
+      const status = body.status;
+      const FAILURE_STATUSES = ['failed', 'dlq', 'quarantine'];
+      const allowed = [...FAILURE_STATUSES, 'all-failures'];
+      if (!status || !allowed.includes(status)) {
+        res.status(400).json({ erro: `status deve ser: ${allowed.join(', ')}` }); return;
+      }
+      const targets = status === 'all-failures' ? FAILURE_STATUSES : [status];
+      const { error, count } = await db.from('webhook_events').delete({ count: 'exact' }).in('status', targets);
+      if (error) { res.status(500).json({ erro: error.message }); return; }
+      res.status(200).json({ sucesso: true, removidos: count ?? 0 });
+      return;
+    }
 
     // Sync product catalog from Bling + WMS and auto-create barcode mappings
     if (body?.action === 'sync-catalog') {

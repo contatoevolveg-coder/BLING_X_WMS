@@ -599,20 +599,20 @@ async function requeue(id) {
 
 async function resolveEvent(id) {
   if (!confirm('Marcar como resolvido? O evento será encerrado sem reprocessamento.')) return;
-  const r = await fetch('/api/admin/events',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'include',body:JSON.stringify({action:'resolve',id})});
+  const r = await fetch('/api/admin/mappings',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'include',body:JSON.stringify({action:'resolve-event',id})});
   if (r.ok) location.reload(); else { const d=await r.json(); alert('Erro: '+(d.erro??r.status)); }
 }
 
 async function deleteEvent(id) {
   if (!confirm('Excluir permanentemente este evento? Esta ação não pode ser desfeita.')) return;
-  const r = await fetch('/api/admin/events',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'include',body:JSON.stringify({action:'delete',id})});
+  const r = await fetch('/api/admin/mappings',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'include',body:JSON.stringify({action:'delete-event',id})});
   if (r.ok) location.reload(); else { const d=await r.json(); alert('Erro: '+(d.erro??r.status)); }
 }
 
 async function clearEvents(status) {
   const labels = {'dlq':'DLQ','quarantine':'Quarentena','failed':'Failed','all-failures':'todas as falhas (DLQ + Quarentena + Failed)'};
   if (!confirm('Excluir permanentemente '+labels[status]+'? Esta ação não pode ser desfeita.')) return;
-  const r = await fetch('/api/admin/events',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'include',body:JSON.stringify({action:'clear',status})});
+  const r = await fetch('/api/admin/mappings',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'include',body:JSON.stringify({action:'clear-events',status})});
   if (r.ok) { const d=await r.json(); alert('Removidos: '+(d.removidos??0)+' eventos.'); location.reload(); }
   else { const d=await r.json(); alert('Erro: '+(d.erro??r.status)); }
 }
