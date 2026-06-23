@@ -15,7 +15,7 @@ export async function sendAlert(
         description: message.slice(0, 2000),
         color: COLORS[level],
         timestamp: new Date().toISOString(),
-        footer: { text: 'SyncStock · Bling × WMS' },
+        footer: { text: 'SyncStock · WMS → Bling' },
       },
     ],
   };

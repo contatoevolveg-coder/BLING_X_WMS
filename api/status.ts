@@ -271,7 +271,7 @@ label.lbl{display:block;font-size:.65rem;font-weight:700;color:#475569;text-tran
 <nav class="sidebar">
   <div class="brand">
     <div class="brand-name">⚡ SyncStock</div>
-    <div class="brand-sub">Bling ↔ WMS Smartgo</div>
+    <div class="brand-sub">WMS → Bling (controle de estoque)</div>
   </div>
 
   <div class="nav-group">Operação</div>
@@ -447,8 +447,8 @@ label.lbl{display:block;font-size:.65rem;font-weight:700;color:#475569;text-tran
     </div>
   </div>
   <div style="background:#1e3a5f;border:1px solid #2563eb;border-radius:8px;padding:12px 16px;margin-bottom:14px;font-size:.78rem;color:#93c5fd;line-height:1.7">
-    <strong>Como funciona:</strong> Clique em <em>Sincronizar Catálogo</em> para puxar todos os produtos do Bling e do WMS com seus códigos de barras EAN/GTIN. O sistema vincula automaticamente produtos com o mesmo código de barras (confiança 100%) e sugere os demais por similaridade de nome. Após sincronizar, todos os eventos futuros usam o catálogo local para matching instantâneo.<br>
-    <strong>Nome do produto:</strong> usa o nome do WMS quando disponível; caso contrário, usa o nome do Bling.
+    <strong>Como funciona:</strong> O WMS é a fonte de verdade — quando uma expedição é finalizada no WMS, o sistema debita automaticamente o estoque no Bling. Clique em <em>Sincronizar Catálogo</em> para importar os produtos do Bling e cruzá-los com os produtos do WMS por código de barras EAN/GTIN ou código SKU. Produtos com o mesmo barcode são vinculados automaticamente (confiança 100%).<br>
+    <strong>Nome do produto:</strong> usa o nome do WMS como referência; caso contrário, usa o nome do Bling.
   </div>
   <div id="sync-result" style="display:none;background:#1e293b;border:1px solid #334155;border-radius:8px;padding:12px 16px;margin-bottom:14px;font-size:.78rem;color:#94a3b8"></div>
   ${SEC('Mapeamentos Pendentes de Aprovação',`${pendingCount} pendentes`,`<table>${TH('Código WMS','Nome WMS','Cod. Barras WMS','SKU Bling','Nome Bling','Cod. Barras Bling','Confiança','Método','Status','Ações')}

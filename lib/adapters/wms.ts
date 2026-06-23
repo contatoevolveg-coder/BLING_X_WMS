@@ -2,7 +2,6 @@ import { logger } from '../logger';
 import { fetchWithRetry } from '../fetchWithRetry';
 import { getSetting } from '../settings';
 import type {
-  WMSCreateExpeditionPayload,
   WMSStockItem,
   WMSCatalogProduct,
 } from '../types';
@@ -47,30 +46,6 @@ async function wmsRequest<T>(
 }
 
 // ── API Pública do Adaptador ───────────────────────────────────────────────
-
-/**
- * Cria uma nova ordem de expedição no WMS a partir de uma lista de produtos.
- * Comunicação: POST /v2/expedicao/por-produtos (API WMS).
- * Acionado sempre que um pedido elegível é criado/atualizado no Bling.
- * 
- * @param payload Dados da expedição (código externo, depositante e lista de produtos)
- * @returns O código interno gerado pelo WMS para a expedição criada
- */
-export async function createExpeditionByProducts(
-  payload: WMSCreateExpeditionPayload
-): Promise<{ codigoInterno: string }> {
-  const result = await wmsRequest<{ codigoInterno: string }>(
-    'POST',
-    '/v2/expedicao/por-produtos',
-    payload
-  );
-  logger.info('wms-adapter', 'Expedition created', {
-    codigoExterno: payload.codigoExterno,
-    product_count: payload.produtos.length,
-    codigoInterno: result.codigoInterno,
-  });
-  return result;
-}
 
 /**
  * Fetches detailed stock balance for the configured depositante.

@@ -150,18 +150,6 @@ export interface BlingStockMovement {
 
 // ── WMS API Payloads ─────────────────────────────────────────
 
-export interface WMSExpeditionProduct {
-  codigoProduto: string;
-  quantidade: number;
-  lote?: string;
-}
-
-export interface WMSCreateExpeditionPayload {
-  codigoExterno: string;
-  docDepositante: string;
-  produtos: WMSExpeditionProduct[];
-}
-
 export interface WMSStockItem {
   codigoProduto: string;
   descricao: string;
