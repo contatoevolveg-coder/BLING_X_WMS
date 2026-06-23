@@ -98,6 +98,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
   const reqBtn = (id:string) =>
     `<button onclick="requeue('${id}')" style="background:#1e3a5f;color:#93c5fd;border:none;border-radius:4px;padding:3px 9px;font-size:.68rem;cursor:pointer;font-weight:600">↩ Reprocessar</button>`;
 
+  const resolveBtn = (id:string) =>
+    `<button onclick="resolveEvent('${id}')" style="background:#14532d;color:#86efac;border:none;border-radius:4px;padding:3px 9px;font-size:.68rem;cursor:pointer;font-weight:600;margin-left:4px">✓ Resolver</button>`;
+
+  const deleteEvBtn = (id:string) =>
+    `<button onclick="deleteEvent('${id}')" style="background:#7f1d1d;color:#fca5a5;border:none;border-radius:4px;padding:3px 9px;font-size:.68rem;cursor:pointer;margin-left:4px">🗑</button>`;
+
+  const failActions = (id:string) => reqBtn(id) + resolveBtn(id) + deleteEvBtn(id);
+
   const confBadge = (n:number) => {
     const c = n>=85?'#14532d:#86efac':n>=60?'#78350f:#fde68a':'#7f1d1d:#fca5a5';
     const [bg,fg]=c.split(':');
@@ -387,17 +395,27 @@ label.lbl{display:block;font-size:.65rem;font-weight:700;color:#475569;text-tran
 
 <!-- ══════════════════════════ VIEW: FALHAS ═══ -->
 <div id="view-failures" class="view">
-  <div class="topbar"><div><div class="page-title">Falhas</div><div class="page-sub">${cntFail} evento(s) com falha</div></div></div>
-  ${SEC('Eventos com Falha / DLQ / Quarentena',`${cntFail} itens`,`<table>${TH('Origem','Tipo','Status','Tent.','Recebido','Erro','Ação')}
-    <tbody>${failEvents.length?failEvents.map(e=>`<tr><td>${srcTag(e.source)}</td><td style="font-family:monospace;font-size:.73rem">${e.event_type}</td><td>${statusPill(e.status)}</td><td style="text-align:center">${e.retry_count}</td><td style="font-size:.73rem;white-space:nowrap">${fmt(e.created_at)}</td><td style="font-size:.7rem;color:#ef4444;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${(e.error??'').replace(/"/g,'&quot;')}">${e.error??'—'}</td><td>${reqBtn(e.id)}</td></tr>`).join(''):`<tr><td colspan="7" style="text-align:center;color:#475569;padding:28px;font-style:italic">Sem falhas 🎉</td></tr>`}</tbody></table>`)}
+  <div class="topbar">
+    <div><div class="page-title">Falhas</div><div class="page-sub">${cntFail} evento(s) com falha</div></div>
+    <div style="display:flex;gap:8px">
+      ${cntFail>0?`<button onclick="clearEvents('all-failures')" style="background:#450a0a;color:#fca5a5;border:1px solid #7f1d1d;border-radius:6px;padding:6px 14px;font-size:.75rem;font-weight:600;cursor:pointer">🗑 Limpar tudo</button>`:''}
+    </div>
+  </div>
+  ${SEC('Eventos com Falha / DLQ / Quarentena',`${cntFail} itens`,`<table>${TH('Origem','Tipo','Status','Tent.','Recebido','Erro','Ações')}
+    <tbody>${failEvents.length?failEvents.map(e=>`<tr><td>${srcTag(e.source)}</td><td style="font-family:monospace;font-size:.73rem">${e.event_type}</td><td>${statusPill(e.status)}</td><td style="text-align:center">${e.retry_count}</td><td style="font-size:.73rem;white-space:nowrap">${fmt(e.created_at)}</td><td style="font-size:.7rem;color:#ef4444;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${(e.error??'').replace(/"/g,'&quot;')}">${e.error??'—'}</td><td style="white-space:nowrap">${failActions(e.id)}</td></tr>`).join(''):`<tr><td colspan="7" style="text-align:center;color:#475569;padding:28px;font-style:italic">Sem falhas 🎉</td></tr>`}</tbody></table>`)}
 </div>
 
 <!-- ════════════════════════════ VIEW: DLQ ═══ -->
 <div id="view-dlq" class="view">
-  <div class="topbar"><div><div class="page-title">Dead Letter Queue</div><div class="page-sub">${cntDlq} evento(s) na DLQ</div></div></div>
+  <div class="topbar">
+    <div><div class="page-title">Dead Letter Queue</div><div class="page-sub">${cntDlq} evento(s) na DLQ</div></div>
+    <div style="display:flex;gap:8px">
+      ${cntDlq>0?`<button onclick="clearEvents('dlq')" style="background:#450a0a;color:#fca5a5;border:1px solid #7f1d1d;border-radius:6px;padding:6px 14px;font-size:.75rem;font-weight:600;cursor:pointer">🗑 Limpar DLQ</button>`:''}
+    </div>
+  </div>
   ${cntDlq>0?`<div class="dlq-alert">⚠️ Esses eventos falharam ${3} vezes seguidas. Corrija a causa raiz antes de reprocessar.</div>`:''}
-  ${SEC('Eventos DLQ',`${cntDlq} itens`,`<table>${TH('Origem','Tipo','Recebido','Erro','Ação')}
-    <tbody>${dlqEvents.length?dlqEvents.map(e=>`<tr><td>${srcTag(e.source)}</td><td style="font-family:monospace;font-size:.73rem">${e.event_type}</td><td style="font-size:.73rem;white-space:nowrap">${fmt(e.created_at)}</td><td style="font-size:.7rem;color:#ef4444;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${(e.error??'').replace(/"/g,'&quot;')}">${e.error??'—'}</td><td>${reqBtn(e.id)}</td></tr>`).join(''):`<tr><td colspan="5" style="text-align:center;color:#475569;padding:28px;font-style:italic">DLQ vazia 🎉</td></tr>`}</tbody></table>`)}
+  ${SEC('Eventos DLQ',`${cntDlq} itens`,`<table>${TH('Origem','Tipo','Recebido','Erro','Ações')}
+    <tbody>${dlqEvents.length?dlqEvents.map(e=>`<tr><td>${srcTag(e.source)}</td><td style="font-family:monospace;font-size:.73rem">${e.event_type}</td><td style="font-size:.73rem;white-space:nowrap">${fmt(e.created_at)}</td><td style="font-size:.7rem;color:#ef4444;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${(e.error??'').replace(/"/g,'&quot;')}">${e.error??'—'}</td><td style="white-space:nowrap">${failActions(e.id)}</td></tr>`).join(''):`<tr><td colspan="5" style="text-align:center;color:#475569;padding:28px;font-style:italic">DLQ vazia 🎉</td></tr>`}</tbody></table>`)}
 </div>
 
 <!-- ══════════════════════════ VIEW: MAPEAMENTOS ═══ -->
@@ -577,6 +595,26 @@ async function requeue(id) {
   if (!confirm('Reprocessar este evento? Voltará para a fila como pendente.')) return;
   const r = await fetch('/api/admin/mappings',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'include',body:JSON.stringify({action:'requeue',id})});
   if (r.ok) location.reload(); else { const d=await r.json(); alert('Erro: '+(d.erro??r.status)); }
+}
+
+async function resolveEvent(id) {
+  if (!confirm('Marcar como resolvido? O evento será encerrado sem reprocessamento.')) return;
+  const r = await fetch('/api/admin/events',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'include',body:JSON.stringify({action:'resolve',id})});
+  if (r.ok) location.reload(); else { const d=await r.json(); alert('Erro: '+(d.erro??r.status)); }
+}
+
+async function deleteEvent(id) {
+  if (!confirm('Excluir permanentemente este evento? Esta ação não pode ser desfeita.')) return;
+  const r = await fetch('/api/admin/events',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'include',body:JSON.stringify({action:'delete',id})});
+  if (r.ok) location.reload(); else { const d=await r.json(); alert('Erro: '+(d.erro??r.status)); }
+}
+
+async function clearEvents(status) {
+  const labels = {'dlq':'DLQ','quarantine':'Quarentena','failed':'Failed','all-failures':'todas as falhas (DLQ + Quarentena + Failed)'};
+  if (!confirm('Excluir permanentemente '+labels[status]+'? Esta ação não pode ser desfeita.')) return;
+  const r = await fetch('/api/admin/events',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'include',body:JSON.stringify({action:'clear',status})});
+  if (r.ok) { const d=await r.json(); alert('Removidos: '+(d.removidos??0)+' eventos.'); location.reload(); }
+  else { const d=await r.json(); alert('Erro: '+(d.erro??r.status)); }
 }
 
 async function addMap() {
