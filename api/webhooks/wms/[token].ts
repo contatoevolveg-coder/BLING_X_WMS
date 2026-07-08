@@ -1,8 +1,25 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { timingSafeEqual } from 'crypto';
 import { z } from 'zod';
-import { enqueue } from '../../../lib/services/queue';
+import { enqueue, markDone, markFailed, QuarantineError } from '../../../lib/services/queue';
+import { processBaixa } from '../../../lib/services/stock';
 import { logger } from '../../../lib/logger';
+import type { WebhookEvent } from '../../../lib/types';
+
+// Tenta processar a baixa imediatamente (em vez de esperar o próximo cron/cron
+// externo). Isso reduz a latência típica de "até 30min" para segundos, e o
+// cron continua existindo como rede de segurança para os casos em que o
+// processamento inline falha ou a função é encerrada por timeout.
+const INLINE_TIMEOUT_MS = 45_000; // maxDuration da Vercel é 60s — deixa margem para markFailed rodar
+
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`Timeout: processamento inline não concluiu em ${ms}ms`)), ms)
+    ),
+  ]);
+}
 
 // ── Zod schema ───────────────────────────────────────────────
 
@@ -111,7 +128,45 @@ export default async function handler(
 
     logger.info('wms-webhook', 'Evento enfileirado com sucesso', { event_id: payload.id });
 
-    res.status(200).json({ sucesso: true, enfileirado: result.enqueued });
+    // Evento duplicado (já recebido antes) — não reprocessa inline, deixa como está.
+    if (!result.enqueued || !result.id) {
+      res.status(200).json({ sucesso: true, enfileirado: false });
+      return;
+    }
+
+    // Tenta processar imediatamente. Se falhar/travar, cai para 'failed' e o
+    // cron (nativo ou externo) reprocessa depois — igual ao fluxo normal.
+    const event: WebhookEvent = {
+      id: result.id,
+      source: 'wms',
+      event_type: `${payload.classificacao}:${payload.tipoEvento}`,
+      idempotency_key: payload.metadata.codigoInterno,
+      payload,
+      status: 'processing',
+      retry_count: 0,
+      error: null,
+      created_at: new Date().toISOString(),
+      processed_at: null,
+    };
+
+    try {
+      await withTimeout(processBaixa(event), INLINE_TIMEOUT_MS);
+      await markDone(event.id);
+      logger.info('wms-webhook', 'Baixa processada inline com sucesso', { event_id: event.id });
+      res.status(200).json({ sucesso: true, enfileirado: true, processado_inline: true });
+    } catch (processErr) {
+      if (processErr instanceof QuarantineError) {
+        // processBaixa já marcou o evento como quarantine — nada a fazer aqui.
+        res.status(200).json({ sucesso: true, enfileirado: true, processado_inline: false, motivo: 'quarantine' });
+        return;
+      }
+      logger.warn('wms-webhook', 'Processamento inline falhou — evento cai para retry via cron', {
+        event_id: event.id,
+        erro: String(processErr),
+      });
+      await markFailed(event.id, 0, String(processErr));
+      res.status(200).json({ sucesso: true, enfileirado: true, processado_inline: false });
+    }
   } catch (err) {
     logger.error('wms-webhook', 'Falha no webhook', { error: String(err) });
     // Always 200 to prevent WMS retry storms.

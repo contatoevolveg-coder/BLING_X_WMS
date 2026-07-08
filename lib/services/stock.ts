@@ -64,14 +64,38 @@ export async function processBaixa(event: WebhookEvent): Promise<void> {
     throw new Error(`Falha ao buscar mapeamentos: ${mappingError.message}`);
   }
 
-  // Busca na tabela processed_baixas para idempotência
-  const { data: alreadyProcessed } = await db
+  // Busca na tabela processed_baixas para idempotência — inclui status para
+  // distinguir baixa confirmada ('done') de lock em andamento ('processing').
+  const { data: existingBaixas } = await db
     .from('processed_baixas')
-    .select('wms_code')
+    .select('wms_code, status, created_at')
     .eq('event_id', event.id)
     .in('wms_code', wmsCodes);
 
-  const processedSet = new Set((alreadyProcessed || []).map((row) => row.wms_code));
+  const baixasByCode = new Map(
+    (existingBaixas || []).map((row) => [row.wms_code, row])
+  );
+
+  const STALE_LOCK_MS = 5 * 60 * 1000; // 5 minutos — lock órfão de um crash anterior
+
+  const processedSet = new Set<string>();
+  for (const [code, row] of baixasByCode) {
+    if (row.status === 'done') {
+      processedSet.add(code);
+      continue;
+    }
+    // status === 'processing'
+    const age = Date.now() - new Date(row.created_at).getTime();
+    if (age < STALE_LOCK_MS) {
+      // Lock recente — presumivelmente outra tentativa em andamento; não reprocessa agora.
+      processedSet.add(code);
+      logger.info('stock-service', `Item ${code} com lock 'processing' recente — pulando nesta execução`, { event_id: event.id });
+    } else {
+      // Lock órfão (crash anterior entre a chamada ao Bling e a confirmação) — libera para retry.
+      logger.warn('stock-service', `Lock 'processing' órfão para ${code} — removendo e permitindo retry`, { event_id: event.id, age_ms: age });
+      await db.from('processed_baixas').delete().eq('wms_code', code).eq('event_id', event.id);
+    }
+  }
 
   // Cria um dicionário em memória para acesso rápido O(1)
   const mappingsByWmsCode = new Map(
@@ -128,23 +152,51 @@ export async function processBaixa(event: WebhookEvent): Promise<void> {
     const chunk = resolvedProducts.slice(i, i + chunkSize);
     await Promise.all(
       chunk.map(async (resolved) => {
-        // Faz a requisição na API do Bling
-        await deductStock({
-          operacao: 'S', // S = Saída (Baixa)
-          preco: 0,
-          custo: 0,
-          data: todayISO(),
-          produto: { id: resolved.bling_product_id },
-          deposito: { id: depositoId },
-          quantidade: resolved.quantidade,
-          observacoes: `Baixa WMS Expedição ${codigoInterno}`,
-        });
-        
-        // Grava no banco que este item já teve a baixa confirmada
-        await db.from('processed_baixas').insert({
+        // Adquire o lock ANTES de chamar o Bling (status='processing', default da coluna).
+        // Se outra tentativa concorrente já criou o lock, o INSERT falha com 23505 (unique
+        // violation) e pulamos o item — evita debitar duas vezes na mesma janela.
+        const { error: lockError } = await db.from('processed_baixas').insert({
           wms_code: resolved.wms_code,
           event_id: event.id,
         });
+
+        if (lockError) {
+          if (lockError.code === '23505') {
+            logger.info('stock-service', `Lock já existente para ${resolved.wms_code} (concorrência) — pulando`, { event_id: event.id });
+            return;
+          }
+          throw new Error(`Falha ao gravar lock de idempotência: ${lockError.message}`);
+        }
+
+        try {
+          // Faz a requisição na API do Bling
+          await deductStock({
+            operacao: 'S', // S = Saída (Baixa)
+            preco: 0,
+            custo: 0,
+            data: todayISO(),
+            produto: { id: resolved.bling_product_id },
+            deposito: { id: depositoId },
+            quantidade: resolved.quantidade,
+            observacoes: `Baixa WMS Expedição ${codigoInterno}`,
+          });
+
+          // Confirma a baixa — transição final do lock.
+          const { error: confirmError } = await db
+            .from('processed_baixas')
+            .update({ status: 'done' })
+            .eq('wms_code', resolved.wms_code)
+            .eq('event_id', event.id);
+
+          if (confirmError) {
+            throw new Error(`Falha ao confirmar baixa: ${confirmError.message}`);
+          }
+        } catch (err) {
+          // Falha na chamada ao Bling (ou na confirmação) — remove o lock para permitir
+          // que o próximo retry tente de novo, em vez de ficar preso em 'processing'.
+          await db.from('processed_baixas').delete().eq('wms_code', resolved.wms_code).eq('event_id', event.id);
+          throw err;
+        }
       })
     );
   }

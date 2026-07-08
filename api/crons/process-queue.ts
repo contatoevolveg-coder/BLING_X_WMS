@@ -6,17 +6,25 @@ import { sendAlert } from '../../lib/alerts';
 import type { WebhookEvent } from '../../lib/types';
 
 /**
- * CRON DE PROCESSAMENTO DA FILA (Executa a cada minuto, conforme vercel.json).
- * 
+ * CRON DE PROCESSAMENTO DA FILA.
+ *
+ * O cron nativo da Vercel (vercel.json) roda 1x/dia — limite do plano Hobby.
+ * Para não depender só disso, dois mecanismos cobrem o intervalo:
+ * 1. O webhook do WMS agora tenta processar a baixa INLINE assim que chega
+ *    (ver api/webhooks/wms/[token].ts) — a maioria dos eventos nunca passa
+ *    por este cron.
+ * 2. Um serviço externo (cron-job.org, configurável na aba Configurações do
+ *    dashboard) chama este endpoint a cada 30min como rede de segurança para
+ *    eventos que falharam no processamento inline.
+ *
  * Arquitetura de Fila:
- * - Em vez de processar os webhooks no momento em que chegam (o que poderia causar timeouts e perdas),
- *   eles são salvos no Supabase com status 'pending'.
- * - Esta função atua como um "Worker" assíncrono. Ela puxa lotes (batches) de 10 eventos pendentes
- *   e processa cada um roteando para o tratador correto (Bling ou WMS).
- * - A paralelização via `Promise.allSettled` permite alta vazão sem bloquear a thread.
- * 
- * Segurança: O Vercel injeta automaticamente `Authorization: Bearer ${CRON_SECRET}` 
- * ao invocar esse endpoint. Bloqueia qualquer tentativa externa sem a chave secreta.
+ * - Eventos ficam em webhook_events com status 'pending' até serem reclamados.
+ * - Esta função atua como um "Worker": puxa um lote de eventos pendentes/com
+ *   falha e processa cada um sequencialmente, roteando para o tratador correto.
+ *
+ * Segurança: O Vercel injeta automaticamente `Authorization: Bearer ${CRON_SECRET}`
+ * ao invocar esse endpoint via cron nativo. O cron externo precisa do mesmo header,
+ * com o valor lido das env vars da Vercel — NUNCA hardcoded em código ou HTML.
  */
 export default async function handler(
   req: VercelRequest,

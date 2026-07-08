@@ -39,8 +39,6 @@ export default async function handler(
   }
 
   try {
-    // saveTokens is hypothetically implemented or available in bling adapters
-    // wait, where did saveTokens come from? It was missing before! Let's just exchange it!
     await exchangeCodeForTokens(authCode);
     
     // Delete the state cookie after successful auth

@@ -14,8 +14,10 @@ interface Divergence {
 }
 
 /**
- * CRON DE RECONCILIAÇÃO (Executa a cada 30 minutos, definido no vercel.json)
- * 
+ * CRON DE RECONCILIAÇÃO (nativo Vercel 1x/dia — vercel.json; plano Hobby não
+ * garante intervalo menor. Se precisar de mais frequência, use o mesmo
+ * mecanismo de cron externo documentado na aba Configurações do dashboard.)
+ *
  * Comunicação: 
  * - Busca todos os estoques do WMS via API `getDetailedStockBalance`.
  * - Busca todos os estoques do Bling via API `listStockBalances`.

@@ -551,10 +551,13 @@ label.lbl{display:block;font-size:.65rem;font-weight:700;color:#475569;text-tran
   <div style="background:#1e293b;border:1px solid #334155;border-radius:10px;margin-top:14px;overflow:hidden">
     <div style="padding:12px 16px;border-bottom:1px solid #334155"><span style="font-size:.82rem;font-weight:600;color:#94a3b8">Cron Externo — processar fila a cada 30min (cron-job.org)</span></div>
     <div style="padding:14px 16px;font-size:.78rem;color:#94a3b8;line-height:1.7">
+      <div style="background:#450a0a;border:1px solid #7f1d1d;border-radius:6px;padding:10px 16px;margin-bottom:10px;color:#fca5a5;font-size:.75rem">
+        ⚠️ O valor do CRON_SECRET nunca deve ser exibido aqui — copie-o do painel de variáveis de ambiente da Vercel ao configurar o cron externo.
+      </div>
       <div style="background:#0f172a;border:1px solid #334155;border-radius:6px;padding:12px 16px;font-family:monospace;font-size:.73rem;color:#86efac;line-height:1.9">
-        URL: https://blingxwms-marketplace-s-projects1.vercel.app/api/crons/process-queue<br>
+        URL: https://&lt;seu-projeto&gt;.vercel.app/api/crons/process-queue<br>
         Método: POST<br>
-        Header: Authorization: Bearer ce419bfc77f6d6ce41ee70d2d6e36f8c453abf28de9ae198<br>
+        Header: Authorization: Bearer &lt;CRON_SECRET — ver env vars na Vercel&gt;<br>
         Intervalo: a cada 30 minutos
       </div>
     </div>
