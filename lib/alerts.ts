@@ -1,3 +1,5 @@
+import { fetchWithRetry } from './fetchWithRetry';
+
 const COLORS = { info: 0x3b82f6, warn: 0xf59e0b, error: 0xef4444 };
 
 export async function sendAlert(
@@ -20,9 +22,17 @@ export async function sendAlert(
     ],
   };
 
-  await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  }).catch(() => {});
+  // Timeout curto (5s) e sem retry: um webhook de alerta lento/pendurado não pode
+  // atrasar o processamento do evento que o disparou. Erros são silenciados de
+  // propósito — alerta é best-effort, nunca deve derrubar o fluxo principal.
+  await fetchWithRetry(
+    url,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    },
+    1,
+    5_000
+  ).catch(() => {});
 }
