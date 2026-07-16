@@ -86,8 +86,9 @@ export async function tryAutoMap(
         active: true,
       });
 
-      if (!error) {
-        logger.info('auto-map', `Barcode match: "${wmsCode}" → Bling "${blingSku}" (${wmsBarcode})`);
+      if (!error || error.code === '23505') {
+        if (!error) logger.info('auto-map', `Barcode match: "${wmsCode}" → Bling "${blingSku}" (${wmsBarcode})`);
+        else logger.info('auto-map', `Concurrent barcode mapping detected for "${wmsCode}" (23505)`);
         return { blingProductId: blingId, blingSku };
       }
     }
@@ -107,8 +108,9 @@ export async function tryAutoMap(
       display_name: displayName,
       active: true,
     });
-    if (!error) {
-      logger.info('auto-map', `Exact code match: "${wmsCode}" → Bling ${m.id}`);
+    if (!error || error.code === '23505') {
+      if (!error) logger.info('auto-map', `Exact code match: "${wmsCode}" → Bling ${m.id}`);
+      else logger.info('auto-map', `Concurrent exact code mapping detected for "${wmsCode}" (23505)`);
       return { blingProductId: m.id, blingSku: m.codigo };
     }
   }
@@ -158,8 +160,7 @@ export async function tryAutoMap(
   const method: 'barcode' | 'exact_code' | 'fuzzy_name' | 'manual' =
     exactMatches.length > 0 ? 'exact_code' : bestProduct ? 'fuzzy_name' : 'manual';
 
-  // 6. Save to pending_mappings for human approval
-  await db.from('pending_mappings').insert({
+  const { error: insertError } = await db.from('pending_mappings').insert({
     wms_code: wmsCode,
     wms_product_name: wmsName ?? null,
     wms_barcode: wmsBarcode,
@@ -172,11 +173,17 @@ export async function tryAutoMap(
     status: 'pending',
   });
 
-  logger.info('auto-map', `Saved pending mapping for "${wmsCode}"`, {
-    confidence,
-    method,
-    suggestion: suggestion?.codigo ?? 'none',
-  });
+  if (insertError && insertError.code !== '23505') {
+    logger.error('auto-map', `Failed to save pending mapping for "${wmsCode}"`, { error: insertError.message });
+  } else if (!insertError) {
+    logger.info('auto-map', `Saved pending mapping for "${wmsCode}"`, {
+      confidence,
+      method,
+      suggestion: suggestion?.codigo ?? 'none',
+    });
+  } else {
+    logger.info('auto-map', `Concurrent pending mapping detected for "${wmsCode}" (23505)`);
+  }
 
   return null;
 }

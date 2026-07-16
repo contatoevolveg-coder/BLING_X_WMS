@@ -54,12 +54,23 @@ async function wmsRequest<T>(
 export async function getDetailedStockBalance(): Promise<WMSStockItem[]> {
   const depositante = await getSetting('WMS_DOC_DEPOSITANTE');
 
-  const result = await wmsRequest<{ itens?: WMSStockItem[] }>(
-    'GET',
-    `/estoque/v2/saldo-detalhado?docDepositante=${encodeURIComponent(depositante)}`
-  );
+  const allItems: WMSStockItem[] = [];
+  let page = 1;
+  const limite = 500;
 
-  return result.itens ?? [];
+  while (true) {
+    const result = await wmsRequest<{ itens?: WMSStockItem[] }>(
+      'GET',
+      `/estoque/v2/saldo-detalhado?docDepositante=${encodeURIComponent(depositante)}&limite=${limite}&pagina=${page}`
+    );
+    const items = result.itens ?? [];
+    allItems.push(...items);
+    
+    if (items.length < limite) break;
+    page++;
+  }
+
+  return allItems;
 }
 
 /**
@@ -85,34 +96,55 @@ export async function listWMSProductCatalog(depositante: string): Promise<WMSCat
 
   // Try dedicated product catalog endpoint (Smartgo /v2/produto/listar)
   const endpoints = [
-    `/v2/produto/listar?docDepositante=${encodeURIComponent(depositante)}&limite=500`,
-    `/v2/produto?docDepositante=${encodeURIComponent(depositante)}&limite=500`,
-    `/estoque/v2/produto?docDepositante=${encodeURIComponent(depositante)}&limite=500`,
+    `/v2/produto/listar`,
+    `/v2/produto`,
+    `/estoque/v2/produto`,
   ];
 
   for (const path of endpoints) {
     try {
-      const res = await fetchWithRetry(`${baseUrl}${path}`, { method: 'GET', headers });
-      if (res.ok) {
+      const allItems: WMSCatalogProduct[] = [];
+      let page = 1;
+      const limite = 500;
+      let success = false;
+
+      while (true) {
+        const res = await fetchWithRetry(`${baseUrl}${path}?docDepositante=${encodeURIComponent(depositante)}&limite=${limite}&pagina=${page}`, { method: 'GET', headers });
+        if (!res.ok) break;
+
+        success = true;
         const data = await res.json() as { itens?: WMSCatalogProduct[]; data?: WMSCatalogProduct[]; produtos?: WMSCatalogProduct[] };
         const items = data.itens ?? data.data ?? data.produtos ?? [];
-        if (items.length > 0) {
-          logger.info('wms-adapter', `WMS catalog fetched from ${path}`, { count: items.length });
-          return items;
-        }
+        allItems.push(...items);
+        
+        if (items.length < limite) break;
+        page++;
+      }
+
+      if (success && allItems.length > 0) {
+        logger.info('wms-adapter', `WMS catalog fetched from ${path}`, { count: allItems.length, pages: page });
+        return allItems;
       }
     } catch { /* try next */ }
   }
 
   // Fallback: stock balance has codes + names (may include barcodes as extra fields)
   try {
-    const res = await fetchWithRetry(
-      `${baseUrl}/estoque/v2/saldo-detalhado?docDepositante=${encodeURIComponent(depositante)}`,
-      { method: 'GET', headers }
-    );
-    if (res.ok) {
+    const allItems: WMSCatalogProduct[] = [];
+    let page = 1;
+    const limite = 500;
+
+    while (true) {
+      const res = await fetchWithRetry(
+        `${baseUrl}/estoque/v2/saldo-detalhado?docDepositante=${encodeURIComponent(depositante)}&limite=${limite}&pagina=${page}`,
+        { method: 'GET', headers }
+      );
+      if (!res.ok) break;
+
       const data = await res.json() as { itens?: (WMSCatalogProduct & { saldoFisico?: number })[] };
-      const items = (data.itens ?? []).map(i => ({
+      const fetchedItems = data.itens ?? [];
+      
+      const mappedItems = fetchedItems.map(i => ({
         codigoProduto: i.codigoProduto,
         descricao: i.descricao,
         codigoBarras: i.codigoBarras,
@@ -120,8 +152,16 @@ export async function listWMSProductCatalog(depositante: string): Promise<WMSCat
         gtin: i.gtin,
         codBarras: i.codBarras,
       }));
-      logger.info('wms-adapter', 'WMS catalog via stock-balance fallback', { count: items.length });
-      return items;
+      
+      allItems.push(...mappedItems);
+      
+      if (fetchedItems.length < limite) break;
+      page++;
+    }
+
+    if (allItems.length > 0) {
+      logger.info('wms-adapter', 'WMS catalog via stock-balance fallback', { count: allItems.length, pages: page });
+      return allItems;
     }
   } catch { /* no-op */ }
 

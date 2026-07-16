@@ -77,6 +77,24 @@ export async function markDone(id: string): Promise<void> {
 }
 
 /**
+ * Updates an event's status to 'processing' before starting inline execution,
+ * preventing cron jobs from concurrently claiming the same event.
+ *
+ * Sets claimed_at (not updated_at — webhook_events has no such column) so that,
+ * if the inline execution crashes/times out without ever calling markDone/
+ * markFailed, claim_pending_events' orphan-rescue clause (status='processing'
+ * AND claimed_at < NOW() - 5min) can still recover the event later.
+ */
+export async function markProcessing(id: string): Promise<void> {
+  const db = getSupabase();
+  const { error } = await db
+    .from('webhook_events')
+    .update({ status: 'processing', claimed_at: new Date().toISOString() })
+    .eq('id', id);
+  if (error) throw new Error(`markProcessing failed: ${error.message}`);
+}
+
+/**
  * Increments retry_count. Transitions to 'dlq' after MAX_RETRIES
  * or back to 'failed' (which claimBatch will pick up next run).
  */

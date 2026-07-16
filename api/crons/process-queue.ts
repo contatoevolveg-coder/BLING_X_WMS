@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { claimBatch, markDone, markFailed, QuarantineError } from '../../lib/services/queue';
-import { processBaixa } from '../../lib/services/stock';
+import { processStockMovement } from '../../lib/services/stock';
 import { logger } from '../../lib/logger';
 import { sendAlert } from '../../lib/alerts';
 import type { WebhookEvent } from '../../lib/types';
@@ -101,7 +101,7 @@ export default async function handler(
 async function route(event: WebhookEvent): Promise<void> {
   switch (event.source) {
     case 'wms':
-      await processBaixa(event);
+      await processStockMovement(event);
       break;
     case 'bling':
       // WMS é somente leitura — eventos Bling não geram expedição; apenas acusamos recebimento

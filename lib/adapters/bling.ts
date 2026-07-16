@@ -6,7 +6,7 @@ import type { BlingStockMovement, BlingToken } from '../types';
 const BLING_BASE_URL = 'https://www.bling.com.br/Api/v3';
 const BLING_TOKEN_URL = 'https://www.bling.com.br/Api/v3/oauth/token';
 const BLING_AUTH_URL = 'https://www.bling.com.br/Api/v3/oauth/authorize';
-const TOKEN_REFRESH_BUFFER_MS = 2 * 60 * 60 * 1_000; // 2h — refresh proactively before expiry
+const TOKEN_REFRESH_BUFFER_MS = 15 * 60 * 1_000; // 15m — fallback if cron fails
 
 function basicCredentials(): string {
   const id = process.env['BLING_CLIENT_ID'];
@@ -67,18 +67,28 @@ async function getValidAccessToken(): Promise<string> {
     Date.now() + refreshed.expires_in * 1_000
   ).toISOString();
 
-  const { error: upsertError } = await db.from('bling_tokens').upsert(
-    {
-      singleton_key: 'default',
-      access_token: refreshed.access_token,
-      refresh_token: refreshed.refresh_token,
-      expires_at: newExpiresAt,
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: 'singleton_key' }
-  );
+  let upsertError;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const result = await db.from('bling_tokens').upsert(
+      {
+        singleton_key: 'default',
+        access_token: refreshed.access_token,
+        refresh_token: refreshed.refresh_token,
+        expires_at: newExpiresAt,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'singleton_key' }
+    );
+    upsertError = result.error;
+    if (!upsertError) break;
+    if (attempt < 3) {
+      logger.warn('bling-adapter', `Failed to persist refreshed tokens (attempt ${attempt}/3). Retrying...`, { erro: upsertError.message });
+      await new Promise(r => setTimeout(r, 1000));
+    }
+  }
 
   if (upsertError) {
+    logger.error('bling-adapter', 'CRITICAL: Failed to save new refresh token. Integration may require manual re-auth.', { error: upsertError.message });
     throw new Error(`Failed to persist refreshed tokens: ${upsertError.message}`);
   }
 

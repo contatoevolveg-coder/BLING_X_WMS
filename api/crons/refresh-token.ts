@@ -43,8 +43,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
   const now = new Date();
   const minutesLeft = Math.round((expiresAt.getTime() - now.getTime()) / 60000);
 
-  // Skip refresh if token still has more than 60 minutes left
-  if (minutesLeft > 60) {
+  // Skip refresh if token still has more than 120 minutes left
+  if (minutesLeft > 120) {
     logger.info('refresh-token', 'Token ainda válido, refresh ignorado', { minutesLeft });
     res.status(200).json({
       renovado: false,
@@ -87,19 +87,28 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
 
   const newExpiresAt = new Date(Date.now() + refreshed.expires_in * 1_000).toISOString();
 
-  const { error: upsertErr } = await db.from('bling_tokens').upsert(
-    {
-      singleton_key: 'default',
-      access_token: refreshed.access_token,
-      refresh_token: refreshed.refresh_token,
-      expires_at: newExpiresAt,
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: 'singleton_key' }
-  );
+  let upsertErr;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const result = await db.from('bling_tokens').upsert(
+      {
+        singleton_key: 'default',
+        access_token: refreshed.access_token,
+        refresh_token: refreshed.refresh_token,
+        expires_at: newExpiresAt,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'singleton_key' }
+    );
+    upsertErr = result.error;
+    if (!upsertErr) break;
+    if (attempt < 3) {
+      logger.warn('refresh-token', `Falha ao salvar token renovado (tentativa ${attempt}/3). Retentando...`, { erro: upsertErr.message });
+      await new Promise(r => setTimeout(r, 1000));
+    }
+  }
 
   if (upsertErr) {
-    logger.error('refresh-token', 'Falha ao salvar token renovado', { error: upsertErr.message });
+    logger.error('refresh-token', 'Falha fatal ao salvar token renovado', { error: upsertErr.message });
     res.status(500).json({ erro: upsertErr.message });
     return;
   }

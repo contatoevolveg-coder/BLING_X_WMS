@@ -1,8 +1,8 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { timingSafeEqual } from 'crypto';
 import { z } from 'zod';
-import { enqueue, markDone, markFailed, QuarantineError } from '../../../lib/services/queue';
-import { processBaixa } from '../../../lib/services/stock';
+import { enqueue, markDone, markFailed, markProcessing, QuarantineError } from '../../../lib/services/queue';
+import { processStockMovement } from '../../../lib/services/stock';
 import { logger } from '../../../lib/logger';
 import type { WebhookEvent } from '../../../lib/types';
 
@@ -108,13 +108,13 @@ export default async function handler(
 
   const payload = parsed.data;
 
-  // Only EXPEDICAO / FINALIZADO triggers a baixa.
+  // Only EXPEDICAO triggers stock movement (FINALIZADO = Baixa, CANCELADO/ESTORNADO = Entrada).
   if (
     payload.classificacao !== 'EXPEDICAO' ||
-    payload.tipoEvento !== 'FINALIZADO'
+    !['FINALIZADO', 'CANCELADO', 'ESTORNADO'].includes(payload.tipoEvento)
   ) {
-    logger.info('wms-webhook', 'Evento ignorado (não é EXPEDICAO FINALIZADO)', { evento: payload.tipoEvento });
-    res.status(200).json({ sucesso: true, acao: 'ignorado', motivo: 'não é expedição finalizada' });
+    logger.info('wms-webhook', 'Evento ignorado (não é EXPEDICAO FINALIZADO ou ESTORNADO)', { evento: payload.tipoEvento });
+    res.status(200).json({ sucesso: true, acao: 'ignorado', motivo: 'evento não exige movimentação de estoque' });
     return;
   }
 
@@ -122,7 +122,7 @@ export default async function handler(
     const result = await enqueue(
       'wms',
       `${payload.classificacao}:${payload.tipoEvento}`,
-      payload.metadata.codigoInterno,
+      `${payload.metadata.codigoInterno}-${payload.tipoEvento}`,
       payload
     );
 
@@ -140,7 +140,7 @@ export default async function handler(
       id: result.id,
       source: 'wms',
       event_type: `${payload.classificacao}:${payload.tipoEvento}`,
-      idempotency_key: payload.metadata.codigoInterno,
+      idempotency_key: `${payload.metadata.codigoInterno}-${payload.tipoEvento}`,
       payload,
       status: 'processing',
       retry_count: 0,
@@ -150,13 +150,14 @@ export default async function handler(
     };
 
     try {
-      await withTimeout(processBaixa(event), INLINE_TIMEOUT_MS);
+      await markProcessing(event.id);
+      await withTimeout(processStockMovement(event), INLINE_TIMEOUT_MS);
       await markDone(event.id);
       logger.info('wms-webhook', 'Baixa processada inline com sucesso', { event_id: event.id });
       res.status(200).json({ sucesso: true, enfileirado: true, processado_inline: true });
     } catch (processErr) {
       if (processErr instanceof QuarantineError) {
-        // processBaixa já marcou o evento como quarantine — nada a fazer aqui.
+        // processStockMovement já marcou o evento como quarantine — nada a fazer aqui.
         res.status(200).json({ sucesso: true, enfileirado: true, processado_inline: false, motivo: 'quarantine' });
         return;
       }

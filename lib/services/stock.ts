@@ -29,8 +29,9 @@ function todayISO(): string {
 // ── Flow A: WMS → Bling baixa ────────────────────────────────
 
 /**
- * PROCESSAMENTO DE BAIXA (WMS -> Bling)
- * Comunicação: Recebe um evento do WMS (Expedição Finalizada) e envia uma baixa de estoque (S) para o Bling.
+ * PROCESSAMENTO DE MOVIMENTAÇÃO DE ESTOQUE (WMS -> Bling)
+ * Comunicação: Recebe um evento do WMS (Expedição Finalizada, Cancelada ou Estornada)
+ * e envia a movimentação para o Bling (Saída ou Entrada).
  * 
  * 1. Extrai a lista de produtos recebidos do WMS.
  * 2. Consulta a tabela `product_mappings` no banco de dados (Supabase) para encontrar o ID correspondente no Bling.
@@ -39,7 +40,7 @@ function todayISO(): string {
  * 
  * @param event O evento de webhook recuperado do banco de dados.
  */
-export async function processBaixa(event: WebhookEvent): Promise<void> {
+export async function processStockMovement(event: WebhookEvent): Promise<void> {
   const payload = event.payload as WMSWebhookPayload;
   const produtos = payload.metadata.produtos;
   const codigoInterno = payload.metadata.codigoInterno;
@@ -52,6 +53,10 @@ export async function processBaixa(event: WebhookEvent): Promise<void> {
     logger.warn('stock-service', 'Expedição sem produtos', { codigoInterno });
     return;
   }
+
+  const isEstorno = payload.tipoEvento === 'CANCELADO' || payload.tipoEvento === 'ESTORNADO';
+  const operacaoBling = isEstorno ? 'E' : 'S'; // E = Entrada (Devolução/Estorno), S = Saída (Baixa)
+  const operacaoNome = isEstorno ? 'Estorno/Devolução' : 'Baixa';
 
   // Consulta todos os mapeamentos de uma só vez (Performance: previne N+1 queries)
   const { data: mappings, error: mappingError } = await db
@@ -108,25 +113,34 @@ export async function processBaixa(event: WebhookEvent): Promise<void> {
     quantidade: number;
   }> = [];
 
-  // Valida e prepara o payload para o Bling
+  // Agrega as quantidades caso o WMS mande o mesmo SKU em múltiplas linhas (ex: múltiplos lotes)
+  const aggregatedProdutos = new Map<string, number>();
   for (const produto of produtos) {
-    if (processedSet.has(produto.codigoProduto)) {
-      logger.info('stock', `Item ${produto.codigoProduto} ignorado na expedição ${event.id} (já processado)`);
+    aggregatedProdutos.set(
+      produto.codigoProduto,
+      (aggregatedProdutos.get(produto.codigoProduto) || 0) + produto.quantidade
+    );
+  }
+
+  // Valida e prepara o payload para o Bling
+  for (const [wmsCode, qtde] of aggregatedProdutos) {
+    if (processedSet.has(wmsCode)) {
+      logger.info('stock', `Item ${wmsCode} ignorado na expedição ${event.id} (já processado)`);
       continue;
     }
 
-    let blingProductId = mappingsByWmsCode.get(produto.codigoProduto);
+    let blingProductId = mappingsByWmsCode.get(wmsCode);
 
     if (!blingProductId) {
       // Tenta auto-mapear antes de quarentenar
-      const autoResult = await tryAutoMap(produto.codigoProduto);
+      const autoResult = await tryAutoMap(wmsCode);
       if (autoResult) {
         blingProductId = autoResult.blingProductId;
-        logger.info('stock-service', `Auto-mapeamento aplicado para "${produto.codigoProduto}"`);
+        logger.info('stock-service', `Auto-mapeamento aplicado para "${wmsCode}"`);
       } else {
         await markQuarantine(
           event.id,
-          `Código WMS "${produto.codigoProduto}" sem mapeamento (expedição ${codigoInterno}). ` +
+          `Código WMS "${wmsCode}" sem mapeamento (expedição ${codigoInterno}). ` +
             `Sugestão salva em "Auto-scan" — reprocesse após aprovar.`
         );
         return;
@@ -134,9 +148,9 @@ export async function processBaixa(event: WebhookEvent): Promise<void> {
     }
 
     resolvedProducts.push({
-      wms_code: produto.codigoProduto,
+      wms_code: wmsCode,
       bling_product_id: blingProductId,
-      quantidade: produto.quantidade,
+      quantidade: qtde,
     });
   }
 
@@ -171,20 +185,25 @@ export async function processBaixa(event: WebhookEvent): Promise<void> {
         try {
           // Faz a requisição na API do Bling
           await deductStock({
-            operacao: 'S', // S = Saída (Baixa)
+            operacao: operacaoBling,
             preco: 0,
             custo: 0,
             data: todayISO(),
             produto: { id: resolved.bling_product_id },
             deposito: { id: depositoId },
             quantidade: resolved.quantidade,
-            observacoes: `Baixa WMS Expedição ${codigoInterno}`,
+            observacoes: `${operacaoNome} WMS Expedição ${codigoInterno}`,
           });
 
-          // Confirma a baixa — transição final do lock.
+          // Confirma a baixa — transição final do lock e preenchimento de colunas de auditoria.
           const { error: confirmError } = await db
             .from('processed_baixas')
-            .update({ status: 'done' })
+            .update({ 
+              status: 'done',
+              quantity: resolved.quantidade,
+              bling_product_id: resolved.bling_product_id,
+              bling_deposito_id: depositoId
+            })
             .eq('wms_code', resolved.wms_code)
             .eq('event_id', event.id);
 
@@ -201,7 +220,7 @@ export async function processBaixa(event: WebhookEvent): Promise<void> {
     );
   }
 
-  logger.info('stock-service', 'Baixa de estoque concluída no Bling', {
+  logger.info('stock-service', `Movimentação de estoque concluída no Bling (${operacaoNome})`, {
     event_id: event.id,
     codigoInterno,
     product_count: resolvedProducts.length,

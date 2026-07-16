@@ -27,6 +27,6 @@ export default function handler(req: VercelRequest, res: VercelResponse): void {
     res.redirect(302, authUrl);
   } catch (err) {
     logger.error('auth-start', 'Failed to build auth URL', { error: String(err) });
-    res.status(500).json({ error: String(err) });
+    res.status(500).json({ erro: 'Falha ao iniciar OAuth', detalhes: String(err) });
   }
 }
