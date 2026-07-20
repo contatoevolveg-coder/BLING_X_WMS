@@ -3,6 +3,7 @@ import { logger } from '../logger';
 import { listAllProductsWithGtin } from '../adapters/bling';
 import { listWMSProductCatalog } from '../adapters/wms';
 import { getSetting } from '../settings';
+import { loadActiveBlingProductIndex } from './mapping-guard';
 import type { SyncCatalogResult } from '../types';
 
 // Exported so auto-map.ts can reuse without duplication
@@ -30,6 +31,32 @@ function extractBarcode(item: Record<string, unknown>): string | null {
     if (val) return val;
   }
   return null;
+}
+
+/**
+ * Monta uma linha de pending_mappings para um candidato que a guarda 1:1
+ * bloqueou (o produto Bling já pertence a outro código WMS ativo). confidence=0
+ * e a nota explicam ao operador por que exige decisão manual.
+ */
+function buildGuardPending(
+  wmsItem: { code: string; name: string | null; barcode: string | null },
+  blingEntry: { platform_id: string; code: string; name: string; barcode: string | null },
+  method: 'barcode' | 'exact_code',
+  owner: string
+): object {
+  return {
+    wms_code: wmsItem.code,
+    wms_product_name: wmsItem.name,
+    wms_barcode: wmsItem.barcode ?? null,
+    bling_sku: blingEntry.code,
+    bling_product_id: parseInt(blingEntry.platform_id),
+    bling_product_name: blingEntry.name,
+    bling_barcode: blingEntry.barcode ?? null,
+    confidence: 0,
+    match_method: method,
+    status: 'pending',
+    notes: `Produto Bling ${blingEntry.platform_id} (${blingEntry.code}) já vinculado ao código WMS "${owner}" — revisão manual necessária (possível variação).`,
+  };
 }
 
 const BATCH = 50;
@@ -125,9 +152,15 @@ export async function syncProductCatalog(): Promise<SyncCatalogResult> {
     .eq('status', 'pending');
   const pendingCodes = new Set((existingPending ?? []).map(m => m.wms_code as string));
 
+  // Índice bling_product_id → wms_code de vínculos ativos. Impede que várias
+  // variações WMS colidam no mesmo produto-pai do Bling (guarda 1:1). É atualizado
+  // conforme criamos vínculos neste mesmo run, cobrindo colisões dentro do lote.
+  const usedBlingIds = await loadActiveBlingProductIndex();
+
   // ── 7. Auto-map by barcode (confidence 100) ──────────────────
   let autoMapped = 0;
   let pendingCreated = 0;
+  let blockedByGuard = 0;
 
   const mappingsToInsert: object[] = [];
   const pendingToInsert: object[] = [];
@@ -139,15 +172,25 @@ export async function syncProductCatalog(): Promise<SyncCatalogResult> {
     if (wmsItem.barcode) {
       const blingMatch = blingByBarcode.get(wmsItem.barcode);
       if (blingMatch) {
+        const blingId = parseInt(blingMatch.platform_id);
+        const owner = usedBlingIds.get(blingId);
+        if (owner && owner !== wmsItem.code) {
+          pendingToInsert.push(buildGuardPending(wmsItem, blingMatch, 'barcode', owner));
+          pendingCodes.add(wmsItem.code);
+          blockedByGuard++;
+          logger.warn('catalog-sync', `Barcode match bloqueado pela guarda 1:1: "${wmsItem.code}" → Bling ${blingId} já é de "${owner}"`);
+          continue;
+        }
         mappingsToInsert.push({
           wms_code: wmsItem.code,
           bling_sku: blingMatch.code,
-          bling_product_id: parseInt(blingMatch.platform_id),
+          bling_product_id: blingId,
           barcode: wmsItem.barcode,
           display_name: wmsItem.name || blingMatch.name,
           active: true,
         });
         mappedCodes.add(wmsItem.code);
+        usedBlingIds.set(blingId, wmsItem.code);
         autoMapped++;
         logger.info('catalog-sync', `Barcode match: "${wmsItem.code}" → "${blingMatch.code}" (${wmsItem.barcode})`);
         continue;
@@ -157,15 +200,25 @@ export async function syncProductCatalog(): Promise<SyncCatalogResult> {
     // Try exact code match (WMS code = Bling code, case-insensitive)
     const codeMatch = blingByCode.get(wmsItem.code.toLowerCase());
     if (codeMatch) {
+      const blingId = parseInt(codeMatch.platform_id);
+      const owner = usedBlingIds.get(blingId);
+      if (owner && owner !== wmsItem.code) {
+        pendingToInsert.push(buildGuardPending(wmsItem, codeMatch, 'exact_code', owner));
+        pendingCodes.add(wmsItem.code);
+        blockedByGuard++;
+        logger.warn('catalog-sync', `Code match bloqueado pela guarda 1:1: "${wmsItem.code}" → Bling ${blingId} já é de "${owner}"`);
+        continue;
+      }
       mappingsToInsert.push({
         wms_code: wmsItem.code,
         bling_sku: codeMatch.code,
-        bling_product_id: parseInt(codeMatch.platform_id),
+        bling_product_id: blingId,
         barcode: wmsItem.barcode ?? null,
         display_name: wmsItem.name || codeMatch.name,
         active: true,
       });
       mappedCodes.add(wmsItem.code);
+      usedBlingIds.set(blingId, wmsItem.code);
       autoMapped++;
       logger.info('catalog-sync', `Code match: "${wmsItem.code}" → "${codeMatch.code}"`);
       continue;
@@ -204,8 +257,14 @@ export async function syncProductCatalog(): Promise<SyncCatalogResult> {
   if (mappingsToInsert.length > 0) {
     await upsertBatch('product_mappings', mappingsToInsert, 'wms_code');
   }
-  if (pendingToInsert.length > 0) {
-    await upsertBatch('pending_mappings', pendingToInsert, 'wms_code,status');
+  // Pending: inserção individual tolerando 23505. O índice único parcial
+  // (uq_pending_wms_pending WHERE status='pending') não casa com o ON CONFLICT
+  // composto que um upsert exigiria, então inserimos linha a linha.
+  for (const row of pendingToInsert) {
+    const { error } = await db.from('pending_mappings').insert(row);
+    if (error && error.code !== '23505') {
+      logger.warn('catalog-sync', 'Falha ao inserir pending', { error: error.message });
+    }
   }
 
   const result: SyncCatalogResult = {
@@ -217,6 +276,6 @@ export async function syncProductCatalog(): Promise<SyncCatalogResult> {
     duration_ms: Date.now() - t0,
   };
 
-  logger.info('catalog-sync', 'Sync complete', { ...result });
+  logger.info('catalog-sync', 'Sync complete', { ...result, blocked_by_guard: blockedByGuard });
   return result;
 }

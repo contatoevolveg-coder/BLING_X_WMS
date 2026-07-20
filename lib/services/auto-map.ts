@@ -2,6 +2,7 @@ import { getSupabase } from '../supabase';
 import { logger } from '../logger';
 import { listProducts, searchProductsByCode } from '../adapters/bling';
 import { tokenSimilarity } from './catalog-sync';
+import { findConflictingWmsCode } from './mapping-guard';
 
 /**
  * Tries to find and create a Bling product mapping for an unmapped WMS code.
@@ -64,6 +65,11 @@ export async function tryAutoMap(
   const wmsBarcode = (wmsEntry?.barcode as string | null) ?? null;
   const wmsName = wmsProductName ?? (wmsEntry?.name as string | null) ?? undefined;
 
+  // Nota preenchida quando um candidato forte (barcode/código) é bloqueado pela
+  // guarda de 1:1 — anexada ao pending para o operador entender por que não
+  // auto-vinculamos e decidir manualmente.
+  let conflictNote: string | null = null;
+
   if (wmsBarcode) {
     const { data: blingEntry } = await db
       .from('product_catalog')
@@ -77,19 +83,27 @@ export async function tryAutoMap(
       const blingId = parseInt(blingEntry.platform_id as string);
       const blingSku = blingEntry.code as string;
 
-      const { error } = await db.from('product_mappings').insert({
-        wms_code: wmsCode,
-        bling_sku: blingSku,
-        bling_product_id: blingId,
-        barcode: wmsBarcode,
-        display_name: displayName,
-        active: true,
-      });
+      // Guarda 1:1 — se este produto Bling já pertence a outro código WMS ativo,
+      // não criamos o vínculo (evita colisão variação→pai). Vira pendência.
+      const conflict = await findConflictingWmsCode(blingId, wmsCode);
+      if (conflict) {
+        conflictNote = `Produto Bling ${blingId} (${blingSku}) já vinculado ao código WMS "${conflict}" — revisão manual necessária (possível variação).`;
+        logger.warn('auto-map', `Barcode match bloqueado pela guarda 1:1 para "${wmsCode}"`, { blingId, conflict });
+      } else {
+        const { error } = await db.from('product_mappings').insert({
+          wms_code: wmsCode,
+          bling_sku: blingSku,
+          bling_product_id: blingId,
+          barcode: wmsBarcode,
+          display_name: displayName,
+          active: true,
+        });
 
-      if (!error || error.code === '23505') {
-        if (!error) logger.info('auto-map', `Barcode match: "${wmsCode}" → Bling "${blingSku}" (${wmsBarcode})`);
-        else logger.info('auto-map', `Concurrent barcode mapping detected for "${wmsCode}" (23505)`);
-        return { blingProductId: blingId, blingSku };
+        if (!error || error.code === '23505') {
+          if (!error) logger.info('auto-map', `Barcode match: "${wmsCode}" → Bling "${blingSku}" (${wmsBarcode})`);
+          else logger.info('auto-map', `Concurrent barcode mapping detected for "${wmsCode}" (23505)`);
+          return { blingProductId: blingId, blingSku };
+        }
       }
     }
   }
@@ -100,18 +114,27 @@ export async function tryAutoMap(
   if (exactMatches.length === 1) {
     const m = exactMatches[0]!;
     const displayName = wmsName ?? m.nome;
-    const { error } = await db.from('product_mappings').insert({
-      wms_code: wmsCode,
-      bling_sku: m.codigo,
-      bling_product_id: m.id,
-      barcode: m.gtin ?? null,
-      display_name: displayName,
-      active: true,
-    });
-    if (!error || error.code === '23505') {
-      if (!error) logger.info('auto-map', `Exact code match: "${wmsCode}" → Bling ${m.id}`);
-      else logger.info('auto-map', `Concurrent exact code mapping detected for "${wmsCode}" (23505)`);
-      return { blingProductId: m.id, blingSku: m.codigo };
+
+    // Guarda 1:1 — mesmo com código exato, não colamos em um produto Bling que
+    // já pertence a outro código WMS ativo.
+    const conflict = conflictNote ? null : await findConflictingWmsCode(m.id, wmsCode);
+    if (conflict) {
+      conflictNote = `Produto Bling ${m.id} (${m.codigo}) já vinculado ao código WMS "${conflict}" — revisão manual necessária (possível variação).`;
+      logger.warn('auto-map', `Exact code match bloqueado pela guarda 1:1 para "${wmsCode}"`, { blingId: m.id, conflict });
+    } else if (!conflictNote) {
+      const { error } = await db.from('product_mappings').insert({
+        wms_code: wmsCode,
+        bling_sku: m.codigo,
+        bling_product_id: m.id,
+        barcode: m.gtin ?? null,
+        display_name: displayName,
+        active: true,
+      });
+      if (!error || error.code === '23505') {
+        if (!error) logger.info('auto-map', `Exact code match: "${wmsCode}" → Bling ${m.id}`);
+        else logger.info('auto-map', `Concurrent exact code mapping detected for "${wmsCode}" (23505)`);
+        return { blingProductId: m.id, blingSku: m.codigo };
+      }
     }
   }
 
@@ -168,9 +191,10 @@ export async function tryAutoMap(
     bling_product_id: suggestion ? Number(suggestion.id) : null,
     bling_product_name: suggestion?.nome ?? null,
     bling_barcode: suggestion?.gtin ?? null,
-    confidence,
+    confidence: conflictNote ? 0 : confidence,
     match_method: method,
     status: 'pending',
+    notes: conflictNote,
   });
 
   if (insertError && insertError.code !== '23505') {

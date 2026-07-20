@@ -1,6 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { getSupabase } from '../../lib/supabase';
 import { isDashAuthenticated } from '../../lib/auth';
+import { findConflictingWmsCode } from '../../lib/services/mapping-guard';
 
 export default async function handler(req: VercelRequest, res: VercelResponse): Promise<void> {
   if (!isDashAuthenticated(req)) {
@@ -49,6 +50,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
 
       if (!blingProductId || !blingSku) {
         res.status(400).json({ erro: 'Informe bling_product_id e bling_sku para aprovar' });
+        return;
+      }
+
+      // Guarda 1:1 — impede aprovar um vínculo cujo produto Bling já pertence a
+      // outro código WMS ativo (causa histórica da quebra de estoque por variações).
+      const conflict = await findConflictingWmsCode(blingProductId, pending.wms_code as string);
+      if (conflict) {
+        res.status(409).json({
+          erro: `Produto Bling ${blingProductId} já está vinculado ao código WMS "${conflict}". ` +
+            `Cada produto Bling só pode ter um código WMS ativo. Se são variações distintas, ` +
+            `vincule cada uma ao ID da variação correspondente no Bling (não ao produto-pai).`,
+        });
         return;
       }
 

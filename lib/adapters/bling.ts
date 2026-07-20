@@ -249,31 +249,77 @@ export async function listAllProducts(): Promise<Array<{ id: number; nome: strin
   return all;
 }
 
+interface BlingProductDetail {
+  id: number;
+  nome: string;
+  codigo: string;
+  gtin?: string;
+  variacoes?: Array<{
+    id: number;
+    nome?: string;
+    codigo?: string;
+    gtin?: string;
+    variacao?: { nome?: string };
+  }>;
+}
+
+export interface BlingCatalogEntry {
+  id: number;
+  nome: string;
+  codigo: string;
+  gtin: string | null;
+}
+
 /**
- * Fetches ALL Bling products with gtin (barcode) populated.
- * The list endpoint does not return gtin — each product must be fetched individually.
- * Uses batches of 5 to balance throughput vs Bling 429 rate limits.
- * Products already known to have no gtin (knownNoGtin set) are skipped.
+ * Achata um produto do Bling em entradas de catálogo mapeáveis.
+ *
+ * REGRA CRÍTICA: quando um produto tem variações (grade), o produto-PAI não é um
+ * alvo de estoque válido — o Bling controla saldo por variação, cada uma com seu
+ * próprio id/SKU/gtin. Antes, o sync ignorava `variacoes` e só conhecia o pai, o
+ * que fazia todas as variações WMS colidirem no id do pai (quebra de estoque).
+ * Agora emitimos uma entrada por variação e NÃO emitimos o pai.
  */
-export async function listAllProductsWithGtin(): Promise<Array<{ id: number; nome: string; codigo: string; gtin: string | null }>> {
+function flattenBlingProduct(d: BlingProductDetail): BlingCatalogEntry[] {
+  const variacoes = Array.isArray(d.variacoes) ? d.variacoes : [];
+  if (variacoes.length === 0) {
+    return [{ id: d.id, nome: d.nome, codigo: d.codigo, gtin: d.gtin || null }];
+  }
+  return variacoes
+    .filter((v) => v && typeof v.id === 'number')
+    .map((v) => {
+      const attr = v.variacao?.nome ?? v.nome ?? '';
+      const nome = attr && !attr.includes(d.nome) ? `${d.nome} ${attr}` : (v.nome || d.nome);
+      return {
+        id: v.id,
+        nome,
+        codigo: v.codigo || d.codigo,
+        gtin: v.gtin || null,
+      };
+    });
+}
+
+/**
+ * Fetches ALL Bling products (variations expanded) with gtin (barcode) populated.
+ * The list endpoint does not return gtin nor variations — each product must be
+ * fetched individually. Uses batches of 5 to balance throughput vs Bling 429 limits.
+ */
+export async function listAllProductsWithGtin(): Promise<BlingCatalogEntry[]> {
   const products = await listAllProducts();
-  const result: Array<{ id: number; nome: string; codigo: string; gtin: string | null }> = [];
+  const result: BlingCatalogEntry[] = [];
   const batchSize = 5;
   for (let i = 0; i < products.length; i += batchSize) {
     const batch = products.slice(i, i + batchSize);
     const details = await Promise.all(
       batch.map(p =>
-        blingRequest<{ data: { id: number; nome: string; codigo: string; gtin?: string } }>(
-          'GET', `/produtos/${p.id}`
-        )
-          .then(r => ({ id: r.data.id, nome: r.data.nome, codigo: r.data.codigo, gtin: r.data.gtin || null }))
-          .catch(() => ({ id: p.id, nome: p.nome, codigo: p.codigo, gtin: null }))
+        blingRequest<{ data: BlingProductDetail }>('GET', `/produtos/${p.id}`)
+          .then(r => flattenBlingProduct(r.data))
+          .catch(() => [{ id: p.id, nome: p.nome, codigo: p.codigo, gtin: null }] as BlingCatalogEntry[])
       )
     );
-    result.push(...details);
+    for (const entries of details) result.push(...entries);
   }
 
-  logger.info('bling-adapter', `listAllProductsWithGtin: ${result.filter(p => p.gtin).length}/${result.length} com barcode`);
+  logger.info('bling-adapter', `listAllProductsWithGtin: ${result.length} itens (variações expandidas), ${result.filter(p => p.gtin).length} com barcode`);
   return result;
 }
 
