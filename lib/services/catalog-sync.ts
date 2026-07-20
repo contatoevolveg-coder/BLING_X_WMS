@@ -125,9 +125,26 @@ export async function syncProductCatalog(): Promise<SyncCatalogResult> {
     .select('platform_id, code, name, barcode')
     .eq('platform', 'bling');
 
-  const blingByBarcode = new Map(
-    (blingCatalog ?? []).filter(b => b.barcode).map(b => [b.barcode as string, b])
-  );
+  // ATENÇÃO: no Bling é comum o mesmo GTIN aparecer na unidade E nos kits
+  // ("Kit c/ 6", "Kit c/ 12", "- 12und"). Um `new Map()` ingênuo mantém o ÚLTIMO
+  // par, o que fazia a unidade ser mapeada para um KIT — cada unidade expedida
+  // dava baixa de um kit inteiro (divergência de 6x/12x). Barcode ambíguo agora
+  // NUNCA auto-mapeia: vai para revisão manual.
+  type BlingCatalogRow = { platform_id: string; code: string; name: string; barcode: string | null };
+  const blingByBarcode = new Map<string, BlingCatalogRow>();
+  const ambiguousBarcodes = new Set<string>();
+  for (const b of (blingCatalog ?? []) as BlingCatalogRow[]) {
+    if (!b.barcode) continue;
+    const code = b.barcode as string;
+    if (blingByBarcode.has(code)) {
+      ambiguousBarcodes.add(code);
+      continue;
+    }
+    blingByBarcode.set(code, b);
+  }
+  if (ambiguousBarcodes.size > 0) {
+    logger.warn('catalog-sync', `${ambiguousBarcodes.size} GTIN(s) ambíguo(s) no Bling (unidade vs kit) — auto-map por barcode desabilitado para eles`);
+  }
 
   const blingByCode = new Map(
     (blingCatalog ?? []).map(b => [b.code.toLowerCase(), b])
@@ -168,8 +185,11 @@ export async function syncProductCatalog(): Promise<SyncCatalogResult> {
   for (const wmsItem of (wmsCatalog ?? [])) {
     if (mappedCodes.has(wmsItem.code) || pendingCodes.has(wmsItem.code)) continue;
 
-    // Try barcode match first
-    if (wmsItem.barcode) {
+    // Try barcode match first — pulando GTINs ambíguos (unidade vs kit).
+    if (wmsItem.barcode && ambiguousBarcodes.has(wmsItem.barcode)) {
+      logger.warn('catalog-sync', `GTIN ambíguo para "${wmsItem.code}" (${wmsItem.barcode}) — sem auto-map, requer decisão manual (unidade vs kit)`);
+      blockedByGuard++;
+    } else if (wmsItem.barcode) {
       const blingMatch = blingByBarcode.get(wmsItem.barcode);
       if (blingMatch) {
         const blingId = parseInt(blingMatch.platform_id);

@@ -71,12 +71,22 @@ export async function tryAutoMap(
   let conflictNote: string | null = null;
 
   if (wmsBarcode) {
-    const { data: blingEntry } = await db
+    // Busca TODOS os produtos Bling com este GTIN. No Bling a unidade e os kits
+    // ("Kit c/ 6", "- 12und") costumam repetir o mesmo GTIN; auto-mapear nesse
+    // caso daria baixa de um kit inteiro por unidade expedida. Ambíguo → manual.
+    const { data: blingMatches } = await db
       .from('product_catalog')
       .select('platform_id, code, name, barcode')
       .eq('platform', 'bling')
       .eq('barcode', wmsBarcode)
-      .maybeSingle();
+      .limit(10);
+
+    if (blingMatches && blingMatches.length > 1) {
+      conflictNote = `GTIN ${wmsBarcode} corresponde a ${blingMatches.length} produtos no Bling (${blingMatches.map(b => b.code).join(', ')}) — provável unidade vs kit. Escolha manual necessária.`;
+      logger.warn('auto-map', `GTIN ambíguo para "${wmsCode}"`, { barcode: wmsBarcode, candidatos: blingMatches.length });
+    }
+
+    const blingEntry = blingMatches && blingMatches.length === 1 ? blingMatches[0] : null;
 
     if (blingEntry) {
       const displayName = wmsName ?? (blingEntry.name as string);
